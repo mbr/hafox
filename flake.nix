@@ -49,15 +49,6 @@
             mosquitto
           ];
         };
-
-        packages.docker = pkgs.dockerTools.buildImage {
-          name = pyproject.project.name;
-          tag = pyproject.project.version;
-
-          config = {
-            Cmd = [ "${self.packages.${system}.default}/bin/${pyproject.project.name}" ];
-          };
-        };
       }
     );
 }
