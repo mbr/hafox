@@ -46,6 +46,7 @@
           buildInputs = with pkgs; [
             (python3.withPackages pythonDeps)
             ruff
+            mosquitto
           ];
         };
 

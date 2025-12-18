@@ -2,6 +2,8 @@
 """SmartFox energy monitor CLI tool."""
 
 import json
+import logging
+import signal
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -16,6 +18,11 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.layout import Layout
 from tabulate import tabulate
+
+try:
+    from .mqtt import SmartFoxMQTTPublisher
+except ImportError:
+    from hafox.mqtt import SmartFoxMQTTPublisher
 
 
 console = Console()
@@ -255,6 +262,146 @@ def export(url: str):
     values["timestamp"] = datetime.now().isoformat()
 
     print(json.dumps(values, indent=2))
+
+
+@cli.command()
+@click.option("-h", "--host", required=True, help="MQTT broker host")
+@click.option("-p", "--port", default=1883, help="MQTT broker port")
+@click.option("-u", "--username", help="MQTT username")
+@click.option("-P", "--password", help="MQTT password")
+@click.option("-i", "--interval", default=30, help="Polling interval in seconds")
+@click.option(
+    "--discovery/--no-discovery", default=True, help="Enable Home Assistant discovery"
+)
+@click.option("--topic-prefix", default="smartfox", help="MQTT topic prefix")
+@click.option("--device-id", default="smartfox", help="Device identifier")
+@click.option(
+    "--smartfox-url", default="http://smartfox/values.xml", help="SmartFox URL"
+)
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+def publish(
+    host: str,
+    port: int,
+    username: Optional[str],
+    password: Optional[str],
+    interval: int,
+    discovery: bool,
+    topic_prefix: str,
+    device_id: str,
+    smartfox_url: str,
+    verbose: bool,
+):
+    """Publish SmartFox data to MQTT broker for Home Assistant integration."""
+
+    # Setup logging
+    log_level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    log = logging.getLogger(__name__)
+
+    console.print(f"[green]Starting SmartFox MQTT publisher[/green]")
+    console.print(f"MQTT: {host}:{port}")
+    console.print(f"SmartFox: {smartfox_url}")
+    console.print(f"Interval: {interval}s")
+    console.print(f"Discovery: {'enabled' if discovery else 'disabled'}")
+
+    # Create MQTT publisher
+    mqtt_publisher = SmartFoxMQTTPublisher(
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        topic_prefix=topic_prefix,
+        device_id=device_id,
+        discovery=discovery,
+    )
+
+    # Global flag for clean shutdown
+    running = True
+
+    def signal_handler(signum, frame):
+        nonlocal running
+        console.print(f"\n[yellow]Received signal {signum}, shutting down...[/yellow]")
+        running = False
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Connect to MQTT broker
+    if not mqtt_publisher.connect():
+        console.print("[red]Failed to connect to MQTT broker[/red]")
+        sys.exit(1)
+
+    console.print("[green]Connected to MQTT broker[/green]")
+
+    # Main loop
+    consecutive_smartfox_failures = 0
+    consecutive_mqtt_failures = 0
+
+    while running:
+        try:
+            # Fetch SmartFox data
+            log.info("Fetching SmartFox data")
+            xml_data = fetch_smartfox_data(smartfox_url)
+
+            if xml_data is None:
+                consecutive_smartfox_failures += 1
+                log.error(
+                    f"SmartFox fetch failed ({consecutive_smartfox_failures} consecutive failures)"
+                )
+                if consecutive_smartfox_failures <= 3:
+                    time.sleep(5)  # Quick retry
+                    continue
+                else:
+                    # Slower retry for persistent failures
+                    time.sleep(min(30, 5 * consecutive_smartfox_failures))
+                    continue
+            else:
+                if consecutive_smartfox_failures > 0:
+                    log.info("SmartFox connection restored")
+                    consecutive_smartfox_failures = 0
+
+            # Parse data
+            values = parse_xml_data(xml_data)
+            if not values:
+                log.error("No data parsed from SmartFox")
+                time.sleep(5)
+                continue
+
+            # Publish to MQTT
+            if mqtt_publisher.connected:
+                success = mqtt_publisher.publish_sensors(values)
+                if success:
+                    if consecutive_mqtt_failures > 0:
+                        log.info("MQTT publishing restored")
+                        consecutive_mqtt_failures = 0
+                else:
+                    consecutive_mqtt_failures += 1
+                    log.error(
+                        f"MQTT publish failed ({consecutive_mqtt_failures} consecutive failures)"
+                    )
+            else:
+                consecutive_mqtt_failures += 1
+                log.error("MQTT not connected, attempting reconnection")
+                if not mqtt_publisher.reconnect():
+                    time.sleep(5)
+                    continue
+
+            # Wait for next cycle
+            time.sleep(interval)
+
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            log.error(f"Unexpected error in main loop: {e}")
+            time.sleep(10)  # Longer wait for unexpected errors
+
+    # Cleanup
+    console.print("[yellow]Shutting down...[/yellow]")
+    mqtt_publisher.disconnect()
+    console.print("[green]Shutdown complete[/green]")
 
 
 def main():
