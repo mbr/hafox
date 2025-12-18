@@ -175,7 +175,13 @@ def cli():
 
 
 @cli.command()
-@click.option("-u", "--url", default="http://smartfox/values.xml", help="SmartFox URL")
+@click.option(
+    "-u",
+    "--url",
+    default="http://smartfox/values.xml",
+    help="SmartFox URL",
+    show_default=True,
+)
 @click.option(
     "-f",
     "--format",
@@ -183,12 +189,17 @@ def cli():
     type=click.Choice(["rich", "simple", "json"]),
     default="rich",
     help="Output format",
+    show_default=True,
 )
 @click.option(
     "-w", "--watch", is_flag=True, help="Watch mode - refresh every 5 seconds"
 )
 @click.option(
-    "-i", "--interval", default=5, help="Refresh interval in seconds (for watch mode)"
+    "-i",
+    "--interval",
+    default=5,
+    help="Refresh interval in seconds (for watch mode)",
+    show_default=True,
 )
 def monitor(url: str, output_format: str, watch: bool, interval: int):
     """Display current SmartFox energy monitor data."""
@@ -227,7 +238,13 @@ def monitor(url: str, output_format: str, watch: bool, interval: int):
 
 
 @cli.command()
-@click.option("-u", "--url", default="http://smartfox/values.xml", help="SmartFox URL")
+@click.option(
+    "-u",
+    "--url",
+    default="http://smartfox/values.xml",
+    help="SmartFox URL",
+    show_default=True,
+)
 @click.option("-k", "--key", help="Specific value key to retrieve")
 def get(url: str, key: Optional[str]):
     """Get specific value(s) from SmartFox."""
@@ -251,7 +268,13 @@ def get(url: str, key: Optional[str]):
 
 
 @cli.command()
-@click.option("-u", "--url", default="http://smartfox/values.xml", help="SmartFox URL")
+@click.option(
+    "-u",
+    "--url",
+    default="http://smartfox/values.xml",
+    help="SmartFox URL",
+    show_default=True,
+)
 def export(url: str):
     """Export all SmartFox data as JSON."""
     xml_data = fetch_smartfox_data(url)
@@ -266,17 +289,33 @@ def export(url: str):
 
 @cli.command()
 @click.option("-h", "--host", required=True, help="MQTT broker host")
-@click.option("-p", "--port", default=1883, help="MQTT broker port")
+@click.option("-p", "--port", default=1883, help="MQTT broker port", show_default=True)
 @click.option("-u", "--username", help="MQTT username")
 @click.option("-P", "--password", help="MQTT password")
-@click.option("-i", "--interval", default=30, help="Polling interval in seconds")
 @click.option(
-    "--discovery/--no-discovery", default=True, help="Enable Home Assistant discovery"
+    "-i",
+    "--interval",
+    default=30,
+    help="Polling interval in seconds",
+    show_default=True,
 )
-@click.option("--topic-prefix", default="smartfox", help="MQTT topic prefix")
-@click.option("--device-id", default="smartfox", help="Device identifier")
 @click.option(
-    "--smartfox-url", default="http://smartfox/values.xml", help="SmartFox URL"
+    "--discovery/--no-discovery",
+    default=True,
+    help="Enable Home Assistant discovery",
+    show_default=True,
+)
+@click.option(
+    "--topic-prefix", default="smartfox", help="MQTT topic prefix", show_default=True
+)
+@click.option(
+    "--device-id", default="smartfox", help="Device identifier", show_default=True
+)
+@click.option(
+    "--smartfox-url",
+    default="http://smartfox/values.xml",
+    help="SmartFox URL",
+    show_default=True,
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 def publish(
