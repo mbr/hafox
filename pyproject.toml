@@ -7,7 +7,7 @@ name = "hafox"
 version = "0.1.0"
 
 [project.scripts]
-myproject = "hafox:main"
+hafox = "hafox:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
