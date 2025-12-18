@@ -22,9 +22,10 @@
             #       added here instead of pyproject.toml.
             requests
             click
-            rich  # For better terminal output formatting
-            python-dateutil  # For date/time handling
-            tabulate  # For table formatting
+            rich
+            python-dateutil
+            tabulate
+            paho-mqtt
           ];
       in
       {
