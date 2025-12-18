@@ -168,17 +168,20 @@ def cli():
 
 
 @cli.command()
-@click.option("--url", default="http://smartfox/values.xml", help="SmartFox URL")
+@click.option("-u", "--url", default="http://smartfox/values.xml", help="SmartFox URL")
 @click.option(
+    "-f",
     "--format",
     "output_format",
     type=click.Choice(["rich", "simple", "json"]),
     default="rich",
     help="Output format",
 )
-@click.option("--watch", is_flag=True, help="Watch mode - refresh every 5 seconds")
 @click.option(
-    "--interval", default=5, help="Refresh interval in seconds (for watch mode)"
+    "-w", "--watch", is_flag=True, help="Watch mode - refresh every 5 seconds"
+)
+@click.option(
+    "-i", "--interval", default=5, help="Refresh interval in seconds (for watch mode)"
 )
 def monitor(url: str, output_format: str, watch: bool, interval: int):
     """Display current SmartFox energy monitor data."""
@@ -217,8 +220,8 @@ def monitor(url: str, output_format: str, watch: bool, interval: int):
 
 
 @cli.command()
-@click.option("--url", default="http://smartfox/values.xml", help="SmartFox URL")
-@click.option("--key", help="Specific value key to retrieve")
+@click.option("-u", "--url", default="http://smartfox/values.xml", help="SmartFox URL")
+@click.option("-k", "--key", help="Specific value key to retrieve")
 def get(url: str, key: Optional[str]):
     """Get specific value(s) from SmartFox."""
     xml_data = fetch_smartfox_data(url)
@@ -241,7 +244,7 @@ def get(url: str, key: Optional[str]):
 
 
 @cli.command()
-@click.option("--url", default="http://smartfox/values.xml", help="SmartFox URL")
+@click.option("-u", "--url", default="http://smartfox/values.xml", help="SmartFox URL")
 def export(url: str):
     """Export all SmartFox data as JSON."""
     xml_data = fetch_smartfox_data(url)
