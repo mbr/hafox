@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hafox"
+version = "0.1.0"
+
+[project.scripts]
+myproject = "hafox:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
