@@ -29,13 +29,14 @@ console = Console()
 
 
 def fetch_smartfox_data(
-    url: str = "http://smartfox/values.xml", timeout: int = 5
+    base_url: str = "http://smartfox", timeout: int = 5
 ) -> Optional[str]:
     """Fetch XML data from SmartFox device."""
+    url = f"{base_url}/values.xml"
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:145.0) Gecko/20100101 Firefox/145.0",
         "Accept": "*/*",
-        "Referer": "http://smartfox/",
+        "Referer": f"{base_url}/",
     }
 
     try:
@@ -45,6 +46,29 @@ def fetch_smartfox_data(
     except requests.RequestException as e:
         console.print(f"[red]Error fetching data: {e}[/red]")
         return None
+
+
+def send_reboot_request(base_url: str, timeout: int = 5) -> bool:
+    """Send reboot request to SmartFox device."""
+    reboot_url = f"{base_url}/devrest.cgi"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) Gecko/20100101 Firefox/146.0",
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Referer": f"{base_url}/einstellungen.shtml",
+        "Priority": "u=0",
+    }
+
+    try:
+        response = requests.get(reboot_url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        return True
+    except requests.RequestException as e:
+        logging.error(f"Failed to send reboot request: {e}")
+        return False
 
 
 def parse_xml_data(xml_data: str) -> Dict[str, str]:
@@ -178,8 +202,8 @@ def cli():
 @click.option(
     "-u",
     "--url",
-    default="http://smartfox/values.xml",
-    help="SmartFox URL",
+    default="http://smartfox",
+    help="SmartFox base URL",
     show_default=True,
 )
 @click.option(
@@ -241,8 +265,8 @@ def monitor(url: str, output_format: str, watch: bool, interval: int):
 @click.option(
     "-u",
     "--url",
-    default="http://smartfox/values.xml",
-    help="SmartFox URL",
+    default="http://smartfox",
+    help="SmartFox base URL",
     show_default=True,
 )
 @click.option("-k", "--key", help="Specific value key to retrieve")
@@ -271,8 +295,8 @@ def get(url: str, key: Optional[str]):
 @click.option(
     "-u",
     "--url",
-    default="http://smartfox/values.xml",
-    help="SmartFox URL",
+    default="http://smartfox",
+    help="SmartFox base URL",
     show_default=True,
 )
 def export(url: str):
@@ -313,9 +337,14 @@ def export(url: str):
 )
 @click.option(
     "--smartfox-url",
-    default="http://smartfox/values.xml",
-    help="SmartFox URL",
+    default="http://smartfox",
+    help="SmartFox base URL",
     show_default=True,
+)
+@click.option(
+    "--reboot-interval",
+    type=int,
+    help="Send device reboot request every N seconds (WARNING: reboots the device)",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 def publish(
@@ -328,6 +357,7 @@ def publish(
     topic_prefix: str,
     device_id: str,
     smartfox_url: str,
+    reboot_interval: Optional[int],
     verbose: bool,
 ):
     """Publish SmartFox data to MQTT broker for Home Assistant integration."""
@@ -344,6 +374,10 @@ def publish(
     console.print(f"SmartFox: {smartfox_url}")
     console.print(f"Interval: {interval}s")
     console.print(f"Discovery: {'enabled' if discovery else 'disabled'}")
+    if reboot_interval:
+        console.print(
+            f"[yellow]Reboot interval: {reboot_interval}s (WARNING: Device will reboot periodically)[/yellow]"
+        )
 
     # Create MQTT publisher
     mqtt_publisher = SmartFoxMQTTPublisher(
@@ -358,6 +392,7 @@ def publish(
 
     # Global flag for clean shutdown
     running = True
+    last_reboot_time = None
 
     def signal_handler(signum, frame):
         nonlocal running
@@ -367,6 +402,10 @@ def publish(
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    # Initialize last reboot time if reboot interval is configured
+    if reboot_interval:
+        log.info(f"Reboot interval configured: {reboot_interval} seconds")
 
     # Connect to MQTT broker
     if not mqtt_publisher.connect():
@@ -381,6 +420,18 @@ def publish(
 
     while running:
         try:
+            # Check if it's time to send reboot request
+            if reboot_interval:
+                current_time = time.time()
+                if last_reboot_time is None or (current_time - last_reboot_time) >= reboot_interval:
+                    log.warning("Sending reboot request to SmartFox device")
+                    success = send_reboot_request(smartfox_url)
+                    if success:
+                        log.info("Reboot request sent successfully")
+                    else:
+                        log.error("Failed to send reboot request")
+                    last_reboot_time = current_time
+
             # Fetch SmartFox data
             log.info("Fetching SmartFox data")
             xml_data = fetch_smartfox_data(smartfox_url)
