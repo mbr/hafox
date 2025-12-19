@@ -73,6 +73,7 @@
               (lib.optionalString (cfg.topicPrefix != null) "--topic-prefix ${cfg.topicPrefix}")
               (lib.optionalString (cfg.deviceId != null) "--device-id ${cfg.deviceId}")
               (lib.optionalString (cfg.smartfoxUrl != null) "--smartfox-url ${cfg.smartfoxUrl}")
+              (lib.optionalString (cfg.rebootInterval != null) "--reboot-interval ${toString cfg.rebootInterval}")
               (lib.optionalString cfg.verbose "--verbose")
             ]
           );
@@ -132,7 +133,13 @@
             smartfoxUrl = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;
-              description = "SmartFox URL";
+              description = "SmartFox base URL";
+            };
+
+            rebootInterval = lib.mkOption {
+              type = lib.types.nullOr lib.types.ints.positive;
+              default = null;
+              description = "Send device reboot request every N seconds (WARNING: reboots the device)";
             };
 
             verbose = lib.mkOption {
