@@ -162,7 +162,7 @@
               wantedBy = [ "multi-user.target" ];
               after = [ "network.target" ];
               serviceConfig = {
-                ExecStart = "${self.packages.${pkgs.system}.default}/bin/hafox publish ${buildArgs}";
+                ExecStart = "${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/hafox publish ${buildArgs}";
                 Restart = "on-failure";
                 DynamicUser = true;
                 # Security hardening
