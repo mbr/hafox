@@ -207,12 +207,6 @@ impl EnergySnapshot {
         let power = PowerFlow {
             production,
             grid_net: grid,
-            grid_import: Power {
-                kilowatts: grid.kilowatts.max(0.0),
-            },
-            grid_export: Power {
-                kilowatts: (-grid.kilowatts).max(0.0),
-            },
             battery: battery_power,
             consumption,
         };
@@ -268,10 +262,6 @@ pub struct PowerFlow {
     pub production: Power,
     /// Signed net grid power measured at the grid boundary.
     pub grid_net: Power,
-    /// Non-negative grid import derived from [`PowerFlow::grid_net`].
-    pub grid_import: Power,
-    /// Non-negative grid export derived from [`PowerFlow::grid_net`].
-    pub grid_export: Power,
     /// Signed battery power selected from live-view battery fields.
     pub battery: Option<Power>,
     /// Site consumption derived from production, grid, and battery power.
@@ -691,8 +681,7 @@ mod tests {
             snapshot.system.ip_address,
             Some(IpAddr::V4(Ipv4Addr::new(10, 97, 59, 174)))
         );
-        assert_eq!(snapshot.power.grid_import.kilowatts, 0.0);
-        assert_eq!(snapshot.power.grid_export.kilowatts, 0.5);
+        assert_eq!(snapshot.power.grid_net.kilowatts, -0.5);
         assert_eq!(snapshot.power.consumption.kilowatts, 2.5);
         assert_eq!(snapshot.energy.solar_production.kilowatt_hours, 500.0);
     }
