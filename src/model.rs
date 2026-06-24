@@ -209,7 +209,7 @@ impl EnergySnapshot {
         let power = PowerFlow {
             production,
             grid_net: grid,
-            battery: battery_power,
+            battery_power,
             consumption,
         };
         let energy = EnergyTotals {
@@ -224,7 +224,6 @@ impl EnergySnapshot {
         };
         let battery = battery_soc.map(|state_of_charge| BatteryState {
             state_of_charge,
-            power: battery_power,
             temperature: battery_temperature,
         });
 
@@ -265,7 +264,7 @@ pub struct PowerFlow {
     /// Signed net grid power measured at the grid boundary.
     pub grid_net: Power,
     /// Signed battery power selected from live-view battery fields.
-    pub battery: Option<Power>,
+    pub battery_power: Option<Power>,
     /// Site consumption derived from production, grid, and battery power.
     pub consumption: Power,
 }
@@ -286,8 +285,6 @@ pub struct EnergyTotals {
 pub struct BatteryState {
     /// Battery state of charge.
     pub state_of_charge: Percent,
-    /// Signed battery power, where negative values represent discharge.
-    pub power: Option<Power>,
     /// Battery temperature when available.
     pub temperature: Option<Temperature>,
 }
