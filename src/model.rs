@@ -12,11 +12,11 @@ use thiserror::Error;
 
 use crate::smartfox::SmartFoxValues;
 
-/// Stores a power value in kilowatts.
+/// Stores a power value in watts.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Power {
-    /// Power normalized to kilowatts.
-    pub kilowatts: f64,
+    /// Power normalized to watts.
+    pub watts: i64,
 }
 
 impl FromStr for Power {
@@ -24,9 +24,9 @@ impl FromStr for Power {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let (amount, unit) = parse_amount_and_unit(value)?;
-        let kilowatts = match unit.as_deref() {
-            Some("kW") => amount,
-            Some("W") => amount / 1000.0,
+        let watts = match unit.as_deref() {
+            Some("kW") => amount * 1000.0,
+            Some("W") => amount,
             Some(unit) => {
                 return Err(MeasurementParseError::UnsupportedUnit {
                     expected: "W or kW",
@@ -40,15 +40,17 @@ impl FromStr for Power {
             }
         };
 
-        Ok(Self { kilowatts })
+        Ok(Self {
+            watts: watts.round() as i64,
+        })
     }
 }
 
-/// Stores an energy value in kilowatt-hours.
+/// Stores an energy value in watt-hours.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Energy {
-    /// Energy normalized to kilowatt-hours.
-    pub kilowatt_hours: f64,
+    /// Energy normalized to watt-hours.
+    pub watt_hours: i64,
 }
 
 impl FromStr for Energy {
@@ -56,9 +58,9 @@ impl FromStr for Energy {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let (amount, unit) = parse_amount_and_unit(value)?;
-        let kilowatt_hours = match unit.as_deref() {
-            Some("kWh") => amount,
-            Some("Wh") => amount / 1000.0,
+        let watt_hours = match unit.as_deref() {
+            Some("kWh") => amount * 1000.0,
+            Some("Wh") => amount,
             Some(unit) => {
                 return Err(MeasurementParseError::UnsupportedUnit {
                     expected: "Wh or kWh",
@@ -72,7 +74,9 @@ impl FromStr for Energy {
             }
         };
 
-        Ok(Self { kilowatt_hours })
+        Ok(Self {
+            watt_hours: watt_hours.round() as i64,
+        })
     }
 }
 
@@ -198,11 +202,9 @@ impl EnergySnapshot {
         let battery_temperature = optional_measurement(values, "battery1Temperature")?;
         let inverters = inverter_measurements(values)?;
         let phases = phase_measurements(values)?;
-        let battery_power_kw = battery_power
-            .map(|power: Power| power.kilowatts)
-            .unwrap_or(0.0);
+        let battery_power_watts = battery_power.map(|power: Power| power.watts).unwrap_or(0);
         let consumption = Power {
-            kilowatts: (production.kilowatts + grid.kilowatts - battery_power_kw).max(0.0),
+            watts: (production.watts + grid.watts - battery_power_watts).max(0),
         };
         let power = PowerFlow {
             production,
@@ -214,9 +216,9 @@ impl EnergySnapshot {
             grid_import: required_measurement(values, "energyValue")?,
             grid_export: required_measurement(values, "eToGridValue")?,
             solar_production: Energy {
-                kilowatt_hours: inverters
+                watt_hours: inverters
                     .iter()
-                    .map(|inverter| inverter.total_energy.kilowatt_hours)
+                    .map(|inverter| inverter.total_energy.watt_hours)
                     .sum(),
             },
         };
@@ -632,13 +634,11 @@ mod tests {
     fn parses_measurements() {
         assert_eq!(
             "1500 W".parse::<Power>().expect("power should parse"),
-            Power { kilowatts: 1.5 }
+            Power { watts: 1500 }
         );
         assert_eq!(
             "25 Wh".parse::<Energy>().expect("energy should parse"),
-            Energy {
-                kilowatt_hours: 0.025
-            }
+            Energy { watt_hours: 25 }
         );
         assert_eq!(
             "31°C"
@@ -681,8 +681,8 @@ mod tests {
             snapshot.system.ip_address,
             Some(IpAddr::V4(Ipv4Addr::new(10, 97, 59, 174)))
         );
-        assert_eq!(snapshot.power.grid_net.kilowatts, -0.5);
-        assert_eq!(snapshot.power.consumption.kilowatts, 2.5);
-        assert_eq!(snapshot.energy.solar_production.kilowatt_hours, 500.0);
+        assert_eq!(snapshot.power.grid_net.watts, -500);
+        assert_eq!(snapshot.power.consumption.watts, 2500);
+        assert_eq!(snapshot.energy.solar_production.watt_hours, 500_000);
     }
 }
