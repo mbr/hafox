@@ -67,8 +67,8 @@ def send_reboot_request(base_url: str, timeout: int = 5) -> bool:
         return False
 
 
-def parse_power_kw(value: Optional[str]) -> Optional[float]:
-    """Parse a SmartFox power value as kilowatts."""
+def parse_number(value: Optional[str]) -> Optional[float]:
+    """Parse the numeric prefix of a SmartFox value."""
     if not value:
         return None
 
@@ -77,10 +77,18 @@ def parse_power_kw(value: Optional[str]) -> Optional[float]:
         return None
 
     try:
-        power = float(parts[0])
+        return float(parts[0])
     except ValueError:
         return None
 
+
+def parse_power_kw(value: Optional[str]) -> Optional[float]:
+    """Parse a SmartFox power value as kilowatts."""
+    power = parse_number(value)
+    if power is None:
+        return None
+
+    parts = value.split() if value else []
     unit = parts[1] if len(parts) > 1 else "kW"
     if unit == "W":
         return power / 1000
@@ -94,11 +102,23 @@ def format_power_kw(value: float) -> str:
     return f"{value:.2f} kW"
 
 
+def selected_battery_key(values: Dict[str, str], suffix: str) -> str:
+    """Select the battery value key used by the SmartFox live view."""
+    is_luna = any(values.get(f"hidBsHuawei2Luna{i}") == "1" for i in range(1, 4))
+    if is_luna and values.get("hidBsProd") == "18":
+        return f"battery1{suffix}"
+
+    preferred = f"battery1{suffix}1"
+    if preferred in values:
+        return preferred
+    return f"battery1{suffix}"
+
+
 def calculate_consumption_power_kw(values: Dict[str, str]) -> Optional[float]:
     """Calculate current consumption using SmartFox live view semantics."""
     production = parse_power_kw(values.get("hidProduction"))
     grid = parse_power_kw(values.get("hidPower"))
-    battery = parse_power_kw(values.get("battery1Power")) or 0
+    battery = parse_power_kw(values.get(selected_battery_key(values, "Power"))) or 0
 
     if production is None or grid is None:
         return None
@@ -108,6 +128,14 @@ def calculate_consumption_power_kw(values: Dict[str, str]) -> Optional[float]:
 
 def add_derived_values(values: Dict[str, str]) -> Dict[str, str]:
     """Add computed values that are not provided directly by SmartFox."""
+    battery_power = values.get(selected_battery_key(values, "Power"))
+    if battery_power is not None:
+        values["batteryPower"] = battery_power
+
+    battery_soc = values.get(selected_battery_key(values, "Soc"))
+    if battery_soc is not None:
+        values["batterySocLive"] = battery_soc
+
     consumption = calculate_consumption_power_kw(values)
     if consumption is not None:
         values["consumptionPower"] = format_power_kw(consumption)
@@ -172,10 +200,9 @@ def create_overview_table(values: Dict[str, str]) -> Table:
     table.add_row("Power", grid_label, grid_value)
 
     # Energy
-    table.add_row("Energy", "Total", values.get("energyValue", "N/A"))
-    table.add_row("Energy", "Today", values.get("eDayValue", "N/A"))
-    table.add_row("Energy", "To Grid Total", values.get("eToGridValue", "N/A"))
-    table.add_row("Energy", "To Grid Today", values.get("eDayToGridValue", "N/A"))
+    table.add_row("Energy", "Grid Import Total", values.get("energyValue", "N/A"))
+    table.add_row("Energy", "Grid Export Total", values.get("eToGridValue", "N/A"))
+    table.add_row("Energy", "Inverter 1 Total", values.get("wr1EnergyValue", "N/A"))
 
     # Solar
     table.add_row("Solar", "Production", values.get("hidProduction", "N/A"))
@@ -184,8 +211,8 @@ def create_overview_table(values: Dict[str, str]) -> Table:
 
     # Battery (if available)
     if "batterySoc" in values and values["batterySoc"] != "-1%":
-        table.add_row("Battery", "SOC", values.get("batterySoc", "N/A"))
-        table.add_row("Battery", "Power", values.get("battery1Power", "N/A"))
+        table.add_row("Battery", "SOC", values.get("batterySocLive", "N/A"))
+        table.add_row("Battery", "Power", values.get("batteryPower", "N/A"))
         table.add_row(
             "Battery", "Temperature", values.get("battery1Temperature", "N/A")
         )
@@ -228,13 +255,12 @@ def display_simple(values: Dict[str, str]) -> None:
             ("consumptionPower", "Consumption"),
             ("hidProduction", "Production"),
             (None, grid_label, grid_value),
-            ("battery1Power", "Battery Power"),
+            ("batteryPower", "Battery Power"),
         ],
         "ENERGY": [
-            ("energyValue", "Total Energy"),
-            ("eDayValue", "Energy Today"),
-            ("eToGridValue", "Energy To Grid Total"),
-            ("eDayToGridValue", "Energy To Grid Today"),
+            ("energyValue", "Grid Import Total"),
+            ("eToGridValue", "Grid Export Total"),
+            ("wr1EnergyValue", "Inverter 1 Total"),
         ],
         "SOLAR PRODUCTION": [
             ("wr1PowerValue", "Inverter 1 Power"),
