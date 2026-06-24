@@ -230,10 +230,10 @@ impl EnergySnapshot {
 
         Ok(Self {
             system: SystemStatus {
-                date: optional_date(values, "dateValue")?,
-                time: optional_time(values, "timeValue")?,
-                ip_address: optional_ip_address(values, "ipAddress")?,
-                firmware_version: values.get("version").map(ToOwned::to_owned),
+                date: required_date(values, "dateValue")?,
+                time: required_time(values, "timeValue")?,
+                ip_address: required_ip_address(values, "ipAddress")?,
+                firmware_version: required_text(values, "version")?,
             },
             power,
             energy,
@@ -248,13 +248,13 @@ impl EnergySnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SystemStatus {
     /// Calendar date reported by the device.
-    pub date: Option<Date>,
+    pub date: Date,
     /// Clock time reported by the device.
-    pub time: Option<Time>,
+    pub time: Time,
     /// Network address reported by the device.
-    pub ip_address: Option<IpAddr>,
+    pub ip_address: IpAddr,
     /// Firmware version reported by the device.
-    pub firmware_version: Option<String>,
+    pub firmware_version: String,
 }
 
 /// Describes live power flow values.
@@ -486,41 +486,47 @@ where
     })
 }
 
-/// Reads and parses an optional SmartFox date field.
-fn optional_date(values: &SmartFoxValues, field: &str) -> Result<Option<Date>, Error> {
+/// Reads a required SmartFox text field.
+fn required_text(values: &SmartFoxValues, field: &str) -> Result<String, Error> {
     values
         .get(field)
-        .map(|value| {
-            value.parse().map_err(|source| Error::InvalidDate {
-                field: field.to_owned(),
-                value: value.to_owned(),
-                source,
-            })
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| Error::MissingField {
+            field: field.to_owned(),
         })
-        .transpose()
 }
 
-/// Reads and parses an optional SmartFox time field.
-fn optional_time(values: &SmartFoxValues, field: &str) -> Result<Option<Time>, Error> {
-    values
-        .get(field)
-        .map(|value| {
-            let time = value.trim().trim_end_matches("Uhr").trim();
-            time.parse().map_err(|source| Error::InvalidTime {
-                field: field.to_owned(),
-                value: value.to_owned(),
-                source,
-            })
-        })
-        .transpose()
+/// Reads and parses a required SmartFox date field.
+fn required_date(values: &SmartFoxValues, field: &str) -> Result<Date, Error> {
+    let value = values.get(field).ok_or_else(|| Error::MissingField {
+        field: field.to_owned(),
+    })?;
+    value.parse().map_err(|source| Error::InvalidDate {
+        field: field.to_owned(),
+        value: value.to_owned(),
+        source,
+    })
 }
 
-/// Reads and parses an optional SmartFox IP address field.
-fn optional_ip_address(values: &SmartFoxValues, field: &str) -> Result<Option<IpAddr>, Error> {
-    values
-        .get(field)
-        .map(|value| parse_ip_address_field(field, value))
-        .transpose()
+/// Reads and parses a required SmartFox time field.
+fn required_time(values: &SmartFoxValues, field: &str) -> Result<Time, Error> {
+    let value = values.get(field).ok_or_else(|| Error::MissingField {
+        field: field.to_owned(),
+    })?;
+    let time = value.trim().trim_end_matches("Uhr").trim();
+    time.parse().map_err(|source| Error::InvalidTime {
+        field: field.to_owned(),
+        value: value.to_owned(),
+        source,
+    })
+}
+
+/// Reads and parses a required SmartFox IP address field.
+fn required_ip_address(values: &SmartFoxValues, field: &str) -> Result<IpAddr, Error> {
+    let value = values.get(field).ok_or_else(|| Error::MissingField {
+        field: field.to_owned(),
+    })?;
+    parse_ip_address_field(field, value)
 }
 
 /// Parses a SmartFox IP address with decimal octets.
@@ -655,6 +661,7 @@ mod tests {
             ("dateValue", "2026-06-25"),
             ("timeValue", "01:07:09 Uhr"),
             ("ipAddress", "010.097.059.174"),
+            ("version", "EM3  00.01.10.02"),
             ("hidProduction", "2.00 kW"),
             ("hidPower", "-500 W"),
             ("battery1Power1", "-1.00 kW"),
@@ -671,15 +678,15 @@ mod tests {
 
         assert_eq!(
             snapshot.system.date,
-            Some("2026-06-25".parse::<Date>().expect("date should parse"))
+            "2026-06-25".parse::<Date>().expect("date should parse")
         );
         assert_eq!(
             snapshot.system.time,
-            Some("01:07:09".parse::<Time>().expect("time should parse"))
+            "01:07:09".parse::<Time>().expect("time should parse")
         );
         assert_eq!(
             snapshot.system.ip_address,
-            Some(IpAddr::V4(Ipv4Addr::new(10, 97, 59, 174)))
+            IpAddr::V4(Ipv4Addr::new(10, 97, 59, 174))
         );
         assert_eq!(snapshot.power.grid_net.watts, -500);
         assert_eq!(snapshot.power.consumption.watts, 2500);
