@@ -571,9 +571,11 @@ fn inverter_measurements(values: &SmartFoxValues) -> Result<Vec<Inverter>, Error
     for index in 1..=5 {
         let power_key = format!("wr{index}PowerValue");
         let energy_key = format!("wr{index}EnergyValue");
-        let power = optional_measurement(values, &power_key)?;
-        let total_energy = optional_measurement(values, &energy_key)?;
-        if let (Some(power), Some(total_energy)) = (power, total_energy) {
+        let power: Option<Power> = optional_measurement(values, &power_key)?;
+        let total_energy: Option<Energy> = optional_measurement(values, &energy_key)?;
+        if let (Some(power), Some(total_energy)) = (power, total_energy)
+            && total_energy.watt_hours > 0
+        {
             inverters.push(Inverter {
                 index,
                 power,
