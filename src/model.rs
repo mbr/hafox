@@ -1,7 +1,12 @@
 //! Domain model for SmartFox measurements.
 
-use std::{num::ParseFloatError, str::FromStr};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    num::{ParseFloatError, ParseIntError},
+    str::FromStr,
+};
 
+use jiff::civil::{Date, Time};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -201,7 +206,7 @@ impl EnergySnapshot {
         };
         let power = PowerFlow {
             production,
-            grid,
+            grid_net: grid,
             grid_import: Power {
                 kilowatts: grid.kilowatts.max(0.0),
             },
@@ -229,9 +234,9 @@ impl EnergySnapshot {
 
         Ok(Self {
             system: SystemStatus {
-                date: values.get("dateValue").map(ToOwned::to_owned),
-                time: values.get("timeValue").map(ToOwned::to_owned),
-                ip_address: values.get("ipAddress").map(ToOwned::to_owned),
+                date: optional_date(values, "dateValue")?,
+                time: optional_time(values, "timeValue")?,
+                ip_address: optional_ip_address(values, "ipAddress")?,
                 firmware_version: values.get("version").map(ToOwned::to_owned),
             },
             power,
@@ -247,11 +252,11 @@ impl EnergySnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SystemStatus {
     /// Calendar date reported by the device.
-    pub date: Option<String>,
+    pub date: Option<Date>,
     /// Clock time reported by the device.
-    pub time: Option<String>,
+    pub time: Option<Time>,
     /// Network address reported by the device.
-    pub ip_address: Option<String>,
+    pub ip_address: Option<IpAddr>,
     /// Firmware version reported by the device.
     pub firmware_version: Option<String>,
 }
@@ -261,11 +266,11 @@ pub struct SystemStatus {
 pub struct PowerFlow {
     /// Solar production measured by the SmartFox controller.
     pub production: Power,
-    /// Signed grid power measured at the grid boundary.
-    pub grid: Power,
-    /// Non-negative grid import derived from [`PowerFlow::grid`].
+    /// Signed net grid power measured at the grid boundary.
+    pub grid_net: Power,
+    /// Non-negative grid import derived from [`PowerFlow::grid_net`].
     pub grid_import: Power,
-    /// Non-negative grid export derived from [`PowerFlow::grid`].
+    /// Non-negative grid export derived from [`PowerFlow::grid_net`].
     pub grid_export: Power,
     /// Signed battery power selected from live-view battery fields.
     pub battery: Option<Power>,
@@ -368,6 +373,47 @@ pub enum Error {
         /// Missing SmartFox field name.
         field: String,
     },
+    /// Indicates that a SmartFox date field could not be converted.
+    #[error("SmartFox field `{field}` has invalid date `{value}`")]
+    InvalidDate {
+        /// SmartFox field name.
+        field: String,
+        /// Raw SmartFox field value.
+        value: String,
+        /// Date parsing failure.
+        #[source]
+        source: jiff::Error,
+    },
+    /// Indicates that a SmartFox time field could not be converted.
+    #[error("SmartFox field `{field}` has invalid time `{value}`")]
+    InvalidTime {
+        /// SmartFox field name.
+        field: String,
+        /// Raw SmartFox field value.
+        value: String,
+        /// Time parsing failure.
+        #[source]
+        source: jiff::Error,
+    },
+    /// Indicates that a SmartFox IP address field is malformed.
+    #[error("SmartFox field `{field}` has invalid IP address `{value}`")]
+    InvalidIpAddress {
+        /// SmartFox field name.
+        field: String,
+        /// Raw SmartFox field value.
+        value: String,
+    },
+    /// Indicates that a SmartFox IP address octet could not be converted.
+    #[error("SmartFox field `{field}` has invalid IP octet in `{value}`")]
+    InvalidIpAddressOctet {
+        /// SmartFox field name.
+        field: String,
+        /// Raw SmartFox field value.
+        value: String,
+        /// Integer parsing failure.
+        #[source]
+        source: ParseIntError,
+    },
     /// Indicates that a SmartFox field could not be converted.
     #[error("SmartFox field `{field}` has invalid value `{value}`")]
     InvalidMeasurement {
@@ -448,6 +494,64 @@ where
     })
 }
 
+/// Reads and parses an optional SmartFox date field.
+fn optional_date(values: &SmartFoxValues, field: &str) -> Result<Option<Date>, Error> {
+    values
+        .get(field)
+        .map(|value| {
+            value.parse().map_err(|source| Error::InvalidDate {
+                field: field.to_owned(),
+                value: value.to_owned(),
+                source,
+            })
+        })
+        .transpose()
+}
+
+/// Reads and parses an optional SmartFox time field.
+fn optional_time(values: &SmartFoxValues, field: &str) -> Result<Option<Time>, Error> {
+    values
+        .get(field)
+        .map(|value| {
+            let time = value.trim().trim_end_matches("Uhr").trim();
+            time.parse().map_err(|source| Error::InvalidTime {
+                field: field.to_owned(),
+                value: value.to_owned(),
+                source,
+            })
+        })
+        .transpose()
+}
+
+/// Reads and parses an optional SmartFox IP address field.
+fn optional_ip_address(values: &SmartFoxValues, field: &str) -> Result<Option<IpAddr>, Error> {
+    values
+        .get(field)
+        .map(|value| parse_ip_address_field(field, value))
+        .transpose()
+}
+
+/// Parses a SmartFox IP address with decimal octets.
+fn parse_ip_address_field(field: &str, value: &str) -> Result<IpAddr, Error> {
+    let octets = value
+        .split('.')
+        .map(|part| {
+            part.parse::<u8>()
+                .map_err(|source| Error::InvalidIpAddressOctet {
+                    field: field.to_owned(),
+                    value: value.to_owned(),
+                    source,
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let [a, b, c, d]: [u8; 4] = octets.try_into().map_err(|_| Error::InvalidIpAddress {
+        field: field.to_owned(),
+        value: value.to_owned(),
+    })?;
+
+    Ok(IpAddr::V4(Ipv4Addr::new(a, b, c, d)))
+}
+
 /// Selects the battery key used by the SmartFox live view.
 fn selected_battery_key(values: &SmartFoxValues, suffix: &str) -> String {
     let is_luna = (1..=3).any(|index| values.get(&format!("hidBsHuawei2Luna{index}")) == Some("1"));
@@ -526,6 +630,10 @@ fn phase_measurements(values: &SmartFoxValues) -> Result<Vec<PhaseMeasurement>, 
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use jiff::civil::{Date, Time};
+
     use super::{Energy, EnergySnapshot, Power, Temperature};
     use crate::smartfox::SmartFoxValues;
 
@@ -554,6 +662,9 @@ mod tests {
     #[test]
     fn builds_snapshot() {
         let values = SmartFoxValues::from_pairs([
+            ("dateValue", "2026-06-25"),
+            ("timeValue", "01:07:09 Uhr"),
+            ("ipAddress", "010.097.059.174"),
             ("hidProduction", "2.00 kW"),
             ("hidPower", "-500 W"),
             ("battery1Power1", "-1.00 kW"),
@@ -568,6 +679,18 @@ mod tests {
         let snapshot =
             EnergySnapshot::from_smartfox_values(&values).expect("snapshot should build");
 
+        assert_eq!(
+            snapshot.system.date,
+            Some("2026-06-25".parse::<Date>().expect("date should parse"))
+        );
+        assert_eq!(
+            snapshot.system.time,
+            Some("01:07:09".parse::<Time>().expect("time should parse"))
+        );
+        assert_eq!(
+            snapshot.system.ip_address,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 97, 59, 174)))
+        );
         assert_eq!(snapshot.power.grid_import.kilowatts, 0.0);
         assert_eq!(snapshot.power.grid_export.kilowatts, 0.5);
         assert_eq!(snapshot.power.consumption.kilowatts, 2.5);
