@@ -423,7 +423,10 @@ def publish(
             # Check if it's time to send reboot request
             if reboot_interval:
                 current_time = time.time()
-                if last_reboot_time is None or (current_time - last_reboot_time) >= reboot_interval:
+                if (
+                    last_reboot_time is None
+                    or (current_time - last_reboot_time) >= reboot_interval
+                ):
                     log.warning("Sending reboot request to SmartFox device")
                     success = send_reboot_request(smartfox_url)
                     if success:
