@@ -60,21 +60,40 @@ class SmartFoxMQTTPublisher:
 
         sensors = {
             # Power sensors (real-time)
+            "consumption_power": {
+                "name": "Power Consumption",
+                "device_class": "power",
+                "unit_of_measurement": "W",
+                "state_class": "measurement",
+                "smartfox_key": "consumptionPower",
+                "convert": lambda x: float(x.split()[0]) * 1000,
+                "icon": "mdi:home-lightning-bolt",
+            },
             "grid_power": {
                 "name": "Grid Power",
                 "device_class": "power",
                 "unit_of_measurement": "W",
                 "state_class": "measurement",
                 "smartfox_key": "hidPower",
+                "convert": lambda x: float(x.split()[0]),
                 "icon": "mdi:transmission-tower",
+            },
+            "grid_import": {
+                "name": "Grid Import",
+                "device_class": "power",
+                "unit_of_measurement": "W",
+                "state_class": "measurement",
+                "smartfox_key": "gridImportPower",
+                "convert": lambda x: float(x.split()[0]) * 1000,
+                "icon": "mdi:transmission-tower-import",
             },
             "grid_export": {
                 "name": "Grid Export",
                 "device_class": "power",
                 "unit_of_measurement": "W",
                 "state_class": "measurement",
-                "smartfox_key": "toGridValue",
-                "convert": lambda x: float(x.split()[0]) * 1000,  # kW to W
+                "smartfox_key": "gridExportPower",
+                "convert": lambda x: float(x.split()[0]) * 1000,
                 "icon": "mdi:transmission-tower-export",
             },
             "solar_production": {

@@ -14,10 +14,6 @@ import click
 import requests
 from rich.console import Console
 from rich.table import Table
-from rich.live import Live
-from rich.panel import Panel
-from rich.layout import Layout
-from tabulate import tabulate
 
 try:
     from .mqtt import SmartFoxMQTTPublisher
@@ -71,6 +67,69 @@ def send_reboot_request(base_url: str, timeout: int = 5) -> bool:
         return False
 
 
+def parse_power_kw(value: Optional[str]) -> Optional[float]:
+    """Parse a SmartFox power value as kilowatts."""
+    if not value:
+        return None
+
+    parts = value.replace(",", ".").split()
+    if not parts:
+        return None
+
+    try:
+        power = float(parts[0])
+    except ValueError:
+        return None
+
+    unit = parts[1] if len(parts) > 1 else "kW"
+    if unit == "W":
+        return power / 1000
+    if unit == "kW":
+        return power
+    return None
+
+
+def format_power_kw(value: float) -> str:
+    """Format a power value in kilowatts."""
+    return f"{value:.2f} kW"
+
+
+def calculate_consumption_power_kw(values: Dict[str, str]) -> Optional[float]:
+    """Calculate current consumption using SmartFox live view semantics."""
+    production = parse_power_kw(values.get("hidProduction"))
+    grid = parse_power_kw(values.get("hidPower"))
+    battery = parse_power_kw(values.get("battery1Power")) or 0
+
+    if production is None or grid is None:
+        return None
+
+    return max(0, production + grid - battery)
+
+
+def add_derived_values(values: Dict[str, str]) -> Dict[str, str]:
+    """Add computed values that are not provided directly by SmartFox."""
+    consumption = calculate_consumption_power_kw(values)
+    if consumption is not None:
+        values["consumptionPower"] = format_power_kw(consumption)
+
+    grid = parse_power_kw(values.get("hidPower"))
+    if grid is not None:
+        values["gridImportPower"] = format_power_kw(max(grid, 0))
+        values["gridExportPower"] = format_power_kw(max(-grid, 0))
+
+    return values
+
+
+def grid_power_status(values: Dict[str, str]) -> tuple[str, str]:
+    """Return the live grid direction and absolute power."""
+    grid = parse_power_kw(values.get("hidPower"))
+    if grid is None:
+        return "Grid Power", values.get("hidPower", "N/A")
+    if grid >= 0:
+        return "From Grid", format_power_kw(grid)
+    return "To Grid", format_power_kw(-grid)
+
+
 def parse_xml_data(xml_data: str) -> Dict[str, str]:
     """Parse XML data and return a dictionary of values."""
     values = {}
@@ -85,7 +144,7 @@ def parse_xml_data(xml_data: str) -> Dict[str, str]:
                 values[id_attr] = text
     except ET.ParseError as e:
         console.print(f"[red]Error parsing XML: {e}[/red]")
-    return values
+    return add_derived_values(values)
 
 
 def create_overview_table(values: Dict[str, str]) -> Table:
@@ -106,10 +165,11 @@ def create_overview_table(values: Dict[str, str]) -> Table:
     table.add_row("System", "IP Address", values.get("ipAddress", "N/A"))
     table.add_row("System", "Firmware", values.get("version", "N/A"))
 
-    # Grid Status
-    table.add_row("Grid", "Power", values.get("hidPower", "N/A"))
-    table.add_row("Grid", "To Grid", values.get("toGridValue", "N/A"))
-    table.add_row("Grid", "Current Power", values.get("detailsPowerValue", "N/A"))
+    # Power flow
+    grid_label, grid_value = grid_power_status(values)
+    table.add_row("Power", "Consumption", values.get("consumptionPower", "N/A"))
+    table.add_row("Power", "Production", values.get("hidProduction", "N/A"))
+    table.add_row("Power", grid_label, grid_value)
 
     # Energy
     table.add_row("Energy", "Total", values.get("energyValue", "N/A"))
@@ -156,28 +216,29 @@ def display_simple(values: Dict[str, str]) -> None:
     print(f"SmartFox Energy Monitor - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'=' * 70}\n")
 
+    grid_label, grid_value = grid_power_status(values)
     sections = {
         "SYSTEM INFO": [
-            "dateValue:Date",
-            "timeValue:Time",
-            "ipAddress:IP Address",
-            "version:Firmware",
+            ("dateValue", "Date"),
+            ("timeValue", "Time"),
+            ("ipAddress", "IP Address"),
+            ("version", "Firmware"),
         ],
-        "GRID STATUS": [
-            "hidPower:Grid Power",
-            "toGridValue:To Grid",
-            "detailsPowerValue:Current Power",
+        "POWER": [
+            ("consumptionPower", "Consumption"),
+            ("hidProduction", "Production"),
+            (None, grid_label, grid_value),
+            ("battery1Power", "Battery Power"),
         ],
         "ENERGY": [
-            "energyValue:Total Energy",
-            "eDayValue:Energy Today",
-            "eToGridValue:Energy To Grid Total",
-            "eDayToGridValue:Energy To Grid Today",
+            ("energyValue", "Total Energy"),
+            ("eDayValue", "Energy Today"),
+            ("eToGridValue", "Energy To Grid Total"),
+            ("eDayToGridValue", "Energy To Grid Today"),
         ],
         "SOLAR PRODUCTION": [
-            "hidProduction:Production",
-            "wr1PowerValue:Inverter 1 Power",
-            "wr1EnergyValue:Inverter 1 Energy",
+            ("wr1PowerValue", "Inverter 1 Power"),
+            ("wr1EnergyValue", "Inverter 1 Energy"),
         ],
     }
 
@@ -185,7 +246,12 @@ def display_simple(values: Dict[str, str]) -> None:
         print(f"{section}")
         print("-" * 35)
         for field in fields:
-            key, label = field.split(":")
+            if len(field) == 3:
+                _, label, value = field
+                print(f"{label:.<25} {value:>25}")
+                continue
+
+            key, label = field
             if key in values:
                 print(f"{label:.<25} {values[key]:>25}")
         print()
@@ -369,7 +435,7 @@ def publish(
     )
     log = logging.getLogger(__name__)
 
-    console.print(f"[green]Starting SmartFox MQTT publisher[/green]")
+    console.print("[green]Starting SmartFox MQTT publisher[/green]")
     console.print(f"MQTT: {host}:{port}")
     console.print(f"SmartFox: {smartfox_url}")
     console.print(f"Interval: {interval}s")
