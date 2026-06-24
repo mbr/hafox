@@ -97,9 +97,31 @@ def parse_power_kw(value: Optional[str]) -> Optional[float]:
     return None
 
 
+def parse_energy_kwh(
+    value: Optional[str], default_unit: str = "kWh"
+) -> Optional[float]:
+    """Parse a SmartFox energy value as kilowatt-hours."""
+    energy = parse_number(value)
+    if energy is None:
+        return None
+
+    parts = value.split() if value else []
+    unit = parts[1] if len(parts) > 1 else default_unit
+    if unit == "Wh":
+        return energy / 1000
+    if unit == "kWh":
+        return energy
+    return None
+
+
 def format_power_kw(value: float) -> str:
     """Format a power value in kilowatts."""
     return f"{value:.2f} kW"
+
+
+def format_energy_kwh(value: float) -> str:
+    """Format an energy value in kilowatt-hours."""
+    return f"{value:.3f} kWh"
 
 
 def selected_battery_key(values: Dict[str, str], suffix: str) -> str:
@@ -126,6 +148,14 @@ def calculate_consumption_power_kw(values: Dict[str, str]) -> Optional[float]:
     return max(0, production + grid - battery)
 
 
+def calculate_solar_energy_total_kwh(values: Dict[str, str]) -> float:
+    """Calculate cumulative solar energy from all inverter counters."""
+    total = 0.0
+    for index in range(1, 6):
+        total += parse_energy_kwh(values.get(f"wr{index}EnergyValue")) or 0
+    return total
+
+
 def add_derived_values(values: Dict[str, str]) -> Dict[str, str]:
     """Add computed values that are not provided directly by SmartFox."""
     battery_power = values.get(selected_battery_key(values, "Power"))
@@ -139,6 +169,10 @@ def add_derived_values(values: Dict[str, str]) -> Dict[str, str]:
     consumption = calculate_consumption_power_kw(values)
     if consumption is not None:
         values["consumptionPower"] = format_power_kw(consumption)
+
+    values["solarEnergyTotal"] = format_energy_kwh(
+        calculate_solar_energy_total_kwh(values)
+    )
 
     grid = parse_power_kw(values.get("hidPower"))
     if grid is not None:
@@ -168,7 +202,9 @@ def parse_xml_data(xml_data: str) -> Dict[str, str]:
             if id_attr and value_elem.text:
                 text = value_elem.text.strip()
                 text = text.replace("&lt;span&gt;", " ").replace("&lt;/span&gt;", "")
+                text = text.replace("<span>", " ").replace("</span>", "")
                 text = text.replace("&#176;", "°").replace("&#x25;", "%")
+                text = text.replace("Â°C", "°C")
                 values[id_attr] = text
     except ET.ParseError as e:
         console.print(f"[red]Error parsing XML: {e}[/red]")
