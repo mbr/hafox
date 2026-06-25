@@ -203,6 +203,9 @@ impl EnergySnapshot {
         let battery_soc = optional_measurement(values, &battery_soc_key)?;
         let battery_temperature = optional_measurement(values, "battery1Temperature")?;
         let inverters = inverter_measurements(values)?;
+        if inverters.is_empty() {
+            return Err(Error::MissingInverterEnergy);
+        }
         let phases = phase_measurements(values)?;
         let battery_power_watts = battery_power.map(|power: Power| power.watts).unwrap_or(0);
         let consumption = Power {
@@ -411,6 +414,9 @@ pub enum Error {
         #[source]
         source: ParseIntError,
     },
+    /// Indicates that no usable inverter lifetime counter was present.
+    #[error("SmartFox inverter lifetime energy counters are missing")]
+    MissingInverterEnergy,
     /// Indicates that a SmartFox field could not be converted.
     #[error("SmartFox field `{field}` has invalid value `{value}`")]
     InvalidMeasurement {
@@ -659,6 +665,28 @@ mod tests {
                 .expect("temperature should parse"),
             Temperature { celsius: 31.0 }
         );
+    }
+
+    /// Rejects snapshots without usable inverter lifetime energy.
+    #[test]
+    fn rejects_missing_inverter_energy() {
+        let values = SmartFoxValues::from_pairs([
+            ("dateValue", "2026-06-25"),
+            ("timeValue", "01:07:09 Uhr"),
+            ("ipAddress", "010.097.059.174"),
+            ("version", "EM3  00.01.10.02"),
+            ("hidProduction", "0 W"),
+            ("hidPower", "0 W"),
+            ("energyValue", "100.000 kWh"),
+            ("eToGridValue", "40.000 kWh"),
+            ("wr1PowerValue", "0 W"),
+            ("wr1EnergyValue", "0 Wh"),
+        ]);
+
+        let error = EnergySnapshot::from_smartfox_values(&values)
+            .expect_err("snapshot should reject missing inverter energy");
+
+        assert!(matches!(error, super::Error::MissingInverterEnergy));
     }
 
     /// Derives live power flow and cumulative solar energy.

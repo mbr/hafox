@@ -13,7 +13,7 @@ use tracing::{debug, error, info, instrument};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    model::EnergySnapshot,
+    model::{EnergySnapshot, EnergyTotals},
     mqtt::{MqttConfig, MqttCredentials, MqttPublisher},
     smartfox::SmartFoxClient,
 };
@@ -193,6 +193,7 @@ async fn dump(smartfox_url: &str) -> Result<(), Error> {
 async fn export_once(smartfox_url: &str, mqtt_config: MqttConfig) -> Result<(), Error> {
     let client = SmartFoxClient::new(smartfox_url).map_err(|source| Error::SmartFox { source })?;
     let snapshot = fetch_snapshot(&client).await?;
+    validate_lifetime_counters(&snapshot, None)?;
     let publisher = MqttPublisher::connect(&mqtt_config)
         .await
         .map_err(mqtt_error)?;
@@ -267,6 +268,10 @@ async fn update_mqtt(
             return Err(error);
         }
     };
+    if let Err(error) = validate_lifetime_counters(&snapshot, state.last_energy.as_ref()) {
+        publish_offline(state).await;
+        return Err(error);
+    }
 
     if state.publisher.is_none() {
         state.publisher = Some(
@@ -299,8 +304,59 @@ async fn update_mqtt(
         .publish_availability(true)
         .await
         .map_err(mqtt_error)?;
+    state.last_energy = Some(snapshot.energy.clone());
 
     Ok(discovery_published)
+}
+
+/// Validates lifetime counters before publishing them to Home Assistant.
+fn validate_lifetime_counters(
+    snapshot: &EnergySnapshot,
+    previous: Option<&EnergyTotals>,
+) -> Result<(), Error> {
+    if snapshot.energy.solar_production.watt_hours <= 0 {
+        return Err(Error::InvalidLifetimeCounter {
+            field: "solar_production",
+            value: snapshot.energy.solar_production.watt_hours,
+        });
+    }
+
+    if let Some(previous) = previous {
+        validate_lifetime_counter(
+            "grid_import",
+            previous.grid_import.watt_hours,
+            snapshot.energy.grid_import.watt_hours,
+        )?;
+        validate_lifetime_counter(
+            "grid_export",
+            previous.grid_export.watt_hours,
+            snapshot.energy.grid_export.watt_hours,
+        )?;
+        validate_lifetime_counter(
+            "solar_production",
+            previous.solar_production.watt_hours,
+            snapshot.energy.solar_production.watt_hours,
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Validates that one lifetime counter did not decrease.
+fn validate_lifetime_counter(
+    field: &'static str,
+    previous: i64,
+    current: i64,
+) -> Result<(), Error> {
+    if current < previous {
+        return Err(Error::DecreasedLifetimeCounter {
+            field,
+            previous,
+            current,
+        });
+    }
+
+    Ok(())
 }
 
 /// Publishes offline availability when a publisher is available.
@@ -340,6 +396,8 @@ struct RunState {
     publisher: Option<MqttPublisher>,
     /// Whether Home Assistant discovery was already published.
     discovery_published: bool,
+    /// Last successfully published lifetime counters.
+    last_energy: Option<EnergyTotals>,
 }
 
 /// Reports application failures.
@@ -369,6 +427,24 @@ enum Error {
     /// Indicates that a username is needed for the configured password.
     #[error("MQTT username is required when MQTT password is configured")]
     MissingMqttUsername,
+    /// Indicates that a lifetime counter is not safe to publish.
+    #[error("lifetime counter `{field}` has invalid value `{value}`")]
+    InvalidLifetimeCounter {
+        /// Counter field name.
+        field: &'static str,
+        /// Counter value.
+        value: i64,
+    },
+    /// Indicates that a lifetime counter moved backwards.
+    #[error("lifetime counter `{field}` decreased from {previous} to {current}")]
+    DecreasedLifetimeCounter {
+        /// Counter field name.
+        field: &'static str,
+        /// Previous published value.
+        previous: i64,
+        /// Current candidate value.
+        current: i64,
+    },
     /// Indicates that a password is needed for the configured username.
     #[error("MQTT password is required when MQTT username is configured")]
     MissingMqttPassword,
