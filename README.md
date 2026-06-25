@@ -11,3 +11,27 @@ hafox run --smartfox-url http://smartfox --mqtt-host astarion --refresh-interval
 ```
 
 `dump` prints the current normalized snapshot. `export` publishes Home Assistant MQTT discovery and one retained state update. `run` publishes discovery on the first successful update and then refreshes MQTT state continuously.
+
+## NixOS
+
+The flake exposes `nixosModules.default`:
+
+```nix
+{
+  imports = [ inputs.hafox.nixosModules.default ];
+
+  services.hafox = {
+    enable = true;
+    smartfoxUrl = "http://smartfox";
+    refreshInterval = "30s";
+    environmentFile = "/run/secrets/hafox.env";
+
+    mqtt = {
+      host = "astarion";
+      username = "hafox";
+    };
+  };
+}
+```
+
+The environment file may contain `HAFOX_MQTT_PASSWORD`, or both MQTT credential variables.
