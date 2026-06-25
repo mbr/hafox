@@ -23,7 +23,7 @@ The flake exposes `nixosModules.default`:
   services.hafox = {
     enable = true;
     smartfoxUrl = "http://smartfox";
-    refreshInterval = "30s";
+    refreshInterval = "5s";
     environmentFile = "/run/secrets/hafox.env";
 
     mqtt = {

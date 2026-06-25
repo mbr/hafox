@@ -108,7 +108,7 @@
 
             refreshInterval = lib.mkOption {
               type = lib.types.str;
-              default = "30s";
+              default = "5s";
               description = "Delay between SmartFox updates.";
             };
 
