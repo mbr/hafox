@@ -55,7 +55,38 @@ If these values seem plausible, retrieval worked correctly.
 
 ## Exporting to MQTT/Home Assistant
 
+`hafox export` publishes information retrieved from SmartFox via MQTT; this process is split, the *discovery* information tells Home Assistant which sensors exist:
 
+```
+homeassistant/sensor/hafox_smartfox_solar_production_power/config
+homeassistant/sensor/hafox_smartfox_grid_net_power/config
+...
+
+
+Once discovery information is written, the *state* is updated once:
+
+```
+hafox/state
+hafox/status
+```
+
+Both of these values are retained.
+
+Discovery is retained, so Home Assistant can recreate entities after a restart. The state topic is also retained, so new subscribers immediately see the latest values.
+
+```sh
+hafox export --mqtt-host myserver
+```
+
+For continuous updates, use `run`:
+
+```sh
+hafox run --mqtt-host myserver --refresh-interval 5s
+```
+
+If the broker needs credentials, pass `--mqtt-username` and `--mqtt-password`, or set `HAFOX_MQTT_USERNAME` and `HAFOX_MQTT_PASSWORD`.
+
+The default discovery prefix is `homeassistant`, the default state topic prefix is `hafox`. Energy sensors only use lifetime counters. Missing or unsafe lifetime data is rejected instead of being published as `0`.
 
 ## Usage
 
