@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
     init_tracing();
 
     run().await.map_err(|error| {
-        report_error(&error);
+        error!(error = %display_full_error(&error), "command failed");
         error.into()
     })
 }
@@ -167,15 +167,16 @@ fn init_tracing() {
         .try_init();
 }
 
-/// Logs an error with its source chain.
-fn report_error(error: &Error) {
-    error!(%error, "command failed");
-
+/// Formats an error and its source chain.
+fn display_full_error(error: &Error) -> String {
+    let mut message = error.to_string();
     let mut source = StdError::source(error);
     while let Some(error) = source {
-        error!(%error, "caused by");
+        message.push_str(": ");
+        message.push_str(&error.to_string());
         source = error.source();
     }
+    message
 }
 
 /// Fetches SmartFox values and prints a normalized snapshot.
@@ -235,8 +236,7 @@ async fn run_continuously(
                 if matches!(&error, Error::Mqtt { .. }) {
                     state.publisher = None;
                 }
-                error!(%error, "update failed; retrying");
-                report_error_sources_debug(&error);
+                error!(error = %display_full_error(&error), "update failed; retrying");
             }
         }
 
@@ -365,15 +365,6 @@ async fn publish_offline(state: &RunState) {
         && let Err(error) = publisher.publish_availability(false).await
     {
         debug!(%error, "failed to publish MQTT offline availability");
-    }
-}
-
-/// Logs an error source chain at debug level.
-fn report_error_sources_debug(error: &Error) {
-    let mut source = StdError::source(error);
-    while let Some(error) = source {
-        debug!(%error, "caused by");
-        source = error.source();
     }
 }
 
