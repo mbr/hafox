@@ -430,6 +430,21 @@ fn sensor_definitions(snapshot: &EnergySnapshot) -> Vec<SensorDefinition> {
             "Site consumption power",
             "{{ value_json.power.site_consumption_w }}",
         ),
+        power_kw_sensor(
+            "solar_production_power_kw",
+            "Solar production power kW",
+            "{{ (value_json.power.solar_production_w / 1000) | round(3) }}",
+        ),
+        power_kw_sensor(
+            "grid_net_power_kw",
+            "Grid net power kW",
+            "{{ (value_json.power.grid_net_w / 1000) | round(3) }}",
+        ),
+        power_kw_sensor(
+            "site_consumption_power_kw",
+            "Site consumption power kW",
+            "{{ (value_json.power.site_consumption_w / 1000) | round(3) }}",
+        ),
         energy_sensor(
             "grid_import_energy_total",
             "Grid import energy total",
@@ -452,6 +467,11 @@ fn sensor_definitions(snapshot: &EnergySnapshot) -> Vec<SensorDefinition> {
             "battery_power",
             "Battery power",
             "{{ value_json.power.battery_w }}",
+        ));
+        sensors.push(power_kw_sensor(
+            "battery_power_kw",
+            "Battery power kW",
+            "{{ (value_json.power.battery_w / 1000) | round(3) }}",
         ));
     }
 
@@ -527,6 +547,19 @@ fn power_sensor(suffix: &str, name: &str, value_template: &str) -> SensorDefinit
     }
 }
 
+/// Builds a power sensor definition in kilowatts.
+fn power_kw_sensor(suffix: &str, name: &str, value_template: &str) -> SensorDefinition {
+    SensorDefinition {
+        unique_id: unique_id(suffix),
+        name: name.to_owned(),
+        value_template: value_template.to_owned(),
+        unit: Some("kW"),
+        device_class: Some("power"),
+        state_class: Some("measurement"),
+        icon: None,
+    }
+}
+
 /// Builds an energy sensor definition.
 fn energy_sensor(suffix: &str, name: &str, value_template: &str) -> SensorDefinition {
     SensorDefinition {
@@ -589,7 +622,7 @@ mod tests {
 
         let sensors = sensor_definitions(&snapshot);
 
-        assert_eq!(sensors.len(), 12);
+        assert_eq!(sensors.len(), 16);
         assert!(
             sensors
                 .iter()
