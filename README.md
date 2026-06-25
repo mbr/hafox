@@ -4,13 +4,13 @@
 
 ## Quickstart
 
-Run the app by either compiling it from source using `cargo build --release` or through `nix run git+ssh://git@github.com/mbr/hafox.git`, e.g.
+Run the app by either compiling it from source with `cargo build --release` or with `nix run git+ssh://git@github.com/mbr/hafox.git`, e.g.
 
 ```
 nix run git+ssh://git@github.com/mbr/hafox.git -- dump
 ```
 
-The simplemost command is `dump`, which in the default configuration connects to a SmartFox device running under http://smartfox (the default). You should see a data dump:
+The simplest command is `dump`, which in the default configuration connects to a SmartFox device at `http://smartfox`. You should see a data dump:
 
 ```
 EnergySnapshot {
@@ -46,22 +46,22 @@ EnergySnapshot {
     solar_production: Energy {
         watt_hours: 13499800,
     },
-...    
+...
 ```
 
 If these values seem plausible, retrieval worked correctly.
 
-**Note**: `hafox` has not seen a multitude of configuration yet, e.g. if you do not have a battery attached, it should work, but it has never been tested against such a setup.
+**Note**: `hafox` has not been tested with many configurations yet. For example, it should work without an attached battery, but that setup has not been tested.
 
 ## Exporting to MQTT/Home Assistant
 
-`hafox export` publishes information retrieved from SmartFox via MQTT; this process is split, the *discovery* information tells Home Assistant which sensors exist:
+`hafox export` publishes information retrieved from SmartFox via MQTT; this process is split: the *discovery* information tells Home Assistant which sensors exist:
 
 ```
 homeassistant/sensor/hafox_smartfox_solar_production_power/config
 homeassistant/sensor/hafox_smartfox_grid_net_power/config
 ...
-
+```
 
 Once discovery information is written, the *state* is updated once:
 
@@ -70,7 +70,7 @@ hafox/state
 hafox/status
 ```
 
-Both of these values are retained. The `hafox/state` payload is JSON:
+Both of these topics are retained. The `hafox/state` payload is JSON:
 
 ```json
 {
@@ -110,7 +110,7 @@ Both of these values are retained. The `hafox/state` payload is JSON:
 }
 ```
 
-The state topic is also retained, so intermittent outages of `hafox` have no catastrophic effects like resetting the meter in Home Assistant. Run `hafox export --help` for a list of configuration options to configure MQTT server credentials.
+The state topic is retained, so intermittent outages of `hafox` do not reset meters in Home Assistant. Run `hafox export --help` for MQTT broker configuration options.
 
 ## Continuous export
 
@@ -120,9 +120,9 @@ For continuous updates, use `run`:
 hafox run --mqtt-host myserver --refresh-interval 5s ...
 ```
 
-This will publish discovery information to MQTT once at the start, writing only state updates every `refresh-interval` seconds afterwards.
+This publishes discovery information to MQTT once at startup, then writes only state updates every `--refresh-interval` seconds afterwards.
 
-Logging can we configured using `RUST_LOG`, the default of `hafox=INFO` will print one log message per update.
+Logging can be configured using `RUST_LOG`. The default, `hafox=info`, prints one log message per update.
 
 ## NixOS
 
