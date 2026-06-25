@@ -9,6 +9,7 @@ use std::{
 use jiff::civil::{Date, Time};
 use serde::Serialize;
 use thiserror::Error;
+use tracing::{debug, instrument};
 
 use crate::smartfox::SmartFoxValues;
 
@@ -192,6 +193,7 @@ pub struct EnergySnapshot {
 
 impl EnergySnapshot {
     /// Builds a normalized snapshot from raw SmartFox values.
+    #[instrument(skip(values), err)]
     pub fn from_smartfox_values(values: &SmartFoxValues) -> Result<Self, Error> {
         let production: Power = required_measurement(values, "hidProduction")?;
         let grid: Power = required_measurement(values, "hidPower")?;
@@ -226,6 +228,12 @@ impl EnergySnapshot {
             state_of_charge,
             temperature: battery_temperature,
         });
+        debug!(
+            has_battery = battery.is_some(),
+            inverter_count = inverters.len(),
+            phase_count = phases.len(),
+            "normalized SmartFox values"
+        );
 
         Ok(Self {
             system: SystemStatus {

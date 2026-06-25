@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, str};
 use quick_xml::events::{BytesStart, Event};
 use reqwest::header::{ACCEPT, REFERER, USER_AGENT as USER_AGENT_HEADER};
 use thiserror::Error;
+use tracing::{debug, instrument};
 use url::Url;
 
 /// Browser-like user agent accepted by the SmartFox web endpoint.
@@ -21,8 +22,10 @@ pub struct SmartFoxClient {
 
 impl SmartFoxClient {
     /// Creates a client from a SmartFox base URL.
+    #[instrument(skip_all, fields(base_url = %base_url), err)]
     pub fn new(base_url: &str) -> Result<Self, Error> {
         let base_url = Url::parse(base_url).map_err(|source| Error::InvalidBaseUrl { source })?;
+        debug!(%base_url, "created SmartFox client");
 
         Ok(Self {
             base_url,
@@ -31,17 +34,20 @@ impl SmartFoxClient {
     }
 
     /// Fetches and parses the current SmartFox values.
+    #[instrument(skip(self), err)]
     pub async fn fetch_values(&self) -> Result<SmartFoxValues, Error> {
         let xml = self.fetch_values_xml().await?;
         SmartFoxValues::from_xml(&xml)
     }
 
     /// Fetches the raw `values.xml` payload.
+    #[instrument(skip(self), err)]
     async fn fetch_values_xml(&self) -> Result<String, Error> {
         let url = self
             .base_url
             .join("values.xml")
             .map_err(|source| Error::ValuesUrl { source })?;
+        debug!(%url, "fetching SmartFox XML");
         let response = self
             .client
             .get(url)
@@ -54,10 +60,13 @@ impl SmartFoxClient {
             .error_for_status()
             .map_err(|source| Error::Request { source })?;
 
-        response
+        let xml = response
             .text()
             .await
-            .map_err(|source| Error::Request { source })
+            .map_err(|source| Error::Request { source })?;
+        debug!(bytes = xml.len(), "fetched SmartFox XML");
+
+        Ok(xml)
     }
 }
 
@@ -70,6 +79,7 @@ pub struct SmartFoxValues {
 
 impl SmartFoxValues {
     /// Parses a SmartFox `values.xml` payload.
+    #[instrument(skip_all, fields(bytes = xml.len()), err)]
     pub fn from_xml(xml: &str) -> Result<Self, Error> {
         let mut reader = quick_xml::Reader::from_str(xml);
         reader.config_mut().trim_text(true);
@@ -108,6 +118,8 @@ impl SmartFoxValues {
                 _ => {}
             }
         }
+
+        debug!(values = entries.len(), "parsed SmartFox XML");
 
         Ok(Self { entries })
     }
