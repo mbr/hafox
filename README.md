@@ -158,16 +158,23 @@ The flake exposes `nixosModules.default`:
 
   services.hafox = {
     enable = true;
+    # package = inputs.hafox.packages.${pkgs.system}.default;
     # smartfoxUrl = "http://smartfox";
     # refreshInterval = "5s";
+    # logFilter = "hafox=info";
 
     mqtt = {
-      host = "myserver";
+      # host = "localhost";
+      # port = 1883;
+      # clientId = "hafox";
       # username = "hafox";
       # passwordFile = "/run/secrets/hafox-mqtt-password";
+      # password = "insecure-example";
+      # discoveryPrefix = "homeassistant";
+      # topicPrefix = "hafox";
     };
   };
 }
 ```
 
-Use `mqtt.passwordFile` for production secrets. `mqtt.password` is available for non-secret deployments but stores the value in the Nix configuration.
+If the MQTT broker requires authentication, set `mqtt.username` and exactly one of `mqtt.passwordFile` or `mqtt.password`. Use `mqtt.passwordFile` for production secrets. `mqtt.password` stores the value in the Nix configuration.
