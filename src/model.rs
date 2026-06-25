@@ -193,7 +193,7 @@ pub struct EnergySnapshot {
 
 impl EnergySnapshot {
     /// Builds a normalized snapshot from raw SmartFox values.
-    #[instrument(skip(values), err)]
+    #[instrument(skip(values))]
     pub fn from_smartfox_values(values: &SmartFoxValues) -> Result<Self, Error> {
         let production: Power = required_measurement(values, "hidProduction")?;
         let grid: Power = required_measurement(values, "hidPower")?;

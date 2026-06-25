@@ -22,7 +22,7 @@ pub struct SmartFoxClient {
 
 impl SmartFoxClient {
     /// Creates a client from a SmartFox base URL.
-    #[instrument(skip_all, fields(base_url = %base_url), err)]
+    #[instrument(skip_all, fields(base_url = %base_url))]
     pub fn new(base_url: &str) -> Result<Self, Error> {
         let base_url = Url::parse(base_url).map_err(|source| Error::InvalidBaseUrl { source })?;
         debug!(%base_url, "created SmartFox client");
@@ -34,14 +34,14 @@ impl SmartFoxClient {
     }
 
     /// Fetches and parses the current SmartFox values.
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self))]
     pub async fn fetch_values(&self) -> Result<SmartFoxValues, Error> {
         let xml = self.fetch_values_xml().await?;
         SmartFoxValues::from_xml(&xml)
     }
 
     /// Fetches the raw `values.xml` payload.
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self))]
     async fn fetch_values_xml(&self) -> Result<String, Error> {
         let url = self
             .base_url
@@ -79,7 +79,7 @@ pub struct SmartFoxValues {
 
 impl SmartFoxValues {
     /// Parses a SmartFox `values.xml` payload.
-    #[instrument(skip_all, fields(bytes = xml.len()), err)]
+    #[instrument(skip_all, fields(bytes = xml.len()))]
     pub fn from_xml(xml: &str) -> Result<Self, Error> {
         let mut reader = quick_xml::Reader::from_str(xml);
         reader.config_mut().trim_text(true);

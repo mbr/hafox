@@ -1,20 +1,25 @@
 //! Command-line interface for SmartFox measurements.
 
 mod model;
+mod mqtt;
 mod smartfox;
 
-use std::error::Error as StdError;
+use std::{error::Error as StdError, time::Duration};
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use thiserror::Error;
-use tracing::{error, info, instrument};
+use tracing::{debug, error, info, instrument};
 use tracing_subscriber::EnvFilter;
 
-use crate::{model::EnergySnapshot, smartfox::SmartFoxClient};
+use crate::{
+    model::EnergySnapshot,
+    mqtt::{MqttConfig, MqttCredentials, MqttPublisher},
+    smartfox::SmartFoxClient,
+};
 
 /// Parses command-line arguments.
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(version, about)]
 struct Cli {
     /// Command to execute.
@@ -23,14 +28,99 @@ struct Cli {
 }
 
 /// Defines supported commands.
-#[derive(Debug, Subcommand)]
+#[derive(Subcommand)]
 enum Commands {
     /// Fetches SmartFox values and prints the normalized model.
-    Fetch {
-        /// SmartFox web interface base URL.
-        #[arg(long, env = "HAFOX_SMARTFOX_URL", default_value = "http://smartfox")]
-        smartfox_url: String,
+    Dump {
+        /// SmartFox configuration.
+        #[command(flatten)]
+        smartfox: SmartFoxArgs,
     },
+    /// Publishes Home Assistant MQTT discovery and one state update.
+    Export {
+        /// SmartFox configuration.
+        #[command(flatten)]
+        smartfox: SmartFoxArgs,
+        /// MQTT configuration.
+        #[command(flatten)]
+        mqtt: MqttArgs,
+    },
+    /// Publishes Home Assistant MQTT discovery and continuous state updates.
+    Run {
+        /// SmartFox configuration.
+        #[command(flatten)]
+        smartfox: SmartFoxArgs,
+        /// MQTT configuration.
+        #[command(flatten)]
+        mqtt: MqttArgs,
+        /// Refresh interval between SmartFox updates.
+        #[arg(
+            long,
+            env = "HAFOX_REFRESH_INTERVAL",
+            default_value = "30s",
+            value_parser = parse_duration
+        )]
+        refresh_interval: Duration,
+    },
+}
+
+/// Describes SmartFox command-line configuration.
+#[derive(Args)]
+struct SmartFoxArgs {
+    /// SmartFox web interface base URL.
+    #[arg(long, env = "HAFOX_SMARTFOX_URL", default_value = "http://smartfox")]
+    smartfox_url: String,
+}
+
+/// Describes MQTT command-line configuration.
+#[derive(Args)]
+struct MqttArgs {
+    /// MQTT broker host name or address.
+    #[arg(long, env = "HAFOX_MQTT_HOST", default_value = "localhost")]
+    mqtt_host: String,
+    /// MQTT broker TCP port.
+    #[arg(long, env = "HAFOX_MQTT_PORT", default_value_t = 1883)]
+    mqtt_port: u16,
+    /// MQTT client identifier.
+    #[arg(long, env = "HAFOX_MQTT_CLIENT_ID", default_value = "hafox")]
+    mqtt_client_id: String,
+    /// MQTT user name.
+    #[arg(long, env = "HAFOX_MQTT_USERNAME")]
+    mqtt_username: Option<String>,
+    /// MQTT password.
+    #[arg(long, env = "HAFOX_MQTT_PASSWORD")]
+    mqtt_password: Option<String>,
+    /// Home Assistant discovery topic prefix.
+    #[arg(
+        long,
+        env = "HAFOX_MQTT_DISCOVERY_PREFIX",
+        default_value = "homeassistant"
+    )]
+    mqtt_discovery_prefix: String,
+    /// hafox state topic prefix.
+    #[arg(long, env = "HAFOX_MQTT_TOPIC_PREFIX", default_value = "hafox")]
+    mqtt_topic_prefix: String,
+}
+
+impl MqttArgs {
+    /// Converts command-line arguments into MQTT configuration.
+    fn into_config(self) -> Result<MqttConfig, Error> {
+        let credentials = match (self.mqtt_username, self.mqtt_password) {
+            (Some(username), Some(password)) => Some(MqttCredentials { username, password }),
+            (None, None) => None,
+            (Some(_), None) => return Err(Error::MissingMqttPassword),
+            (None, Some(_)) => return Err(Error::MissingMqttUsername),
+        };
+
+        Ok(MqttConfig {
+            host: self.mqtt_host,
+            port: self.mqtt_port,
+            client_id: self.mqtt_client_id,
+            credentials,
+            discovery_prefix: self.mqtt_discovery_prefix,
+            topic_prefix: self.mqtt_topic_prefix,
+        })
+    }
 }
 
 /// Runs the command-line application.
@@ -49,7 +139,22 @@ async fn run() -> Result<(), Error> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Fetch { smartfox_url } => fetch(&smartfox_url).await,
+        Commands::Dump { smartfox } => dump(&smartfox.smartfox_url).await,
+        Commands::Export { smartfox, mqtt } => {
+            export_once(&smartfox.smartfox_url, mqtt.into_config()?).await
+        }
+        Commands::Run {
+            smartfox,
+            mqtt,
+            refresh_interval,
+        } => {
+            run_continuously(
+                &smartfox.smartfox_url,
+                mqtt.into_config()?,
+                refresh_interval,
+            )
+            .await
+        }
     }
 }
 
@@ -75,20 +180,166 @@ fn report_error(error: &Error) {
 
 /// Fetches SmartFox values and prints a normalized snapshot.
 #[instrument(skip_all, fields(smartfox_url = %smartfox_url), err)]
-async fn fetch(smartfox_url: &str) -> Result<(), Error> {
-    info!("fetching SmartFox values");
+async fn dump(smartfox_url: &str) -> Result<(), Error> {
     let client = SmartFoxClient::new(smartfox_url).map_err(|source| Error::SmartFox { source })?;
+    let snapshot = fetch_snapshot(&client).await?;
+
+    println!("{snapshot:#?}");
+    Ok(())
+}
+
+/// Publishes one MQTT discovery and state update.
+#[instrument(skip_all, fields(smartfox_url = %smartfox_url), err)]
+async fn export_once(smartfox_url: &str, mqtt_config: MqttConfig) -> Result<(), Error> {
+    let client = SmartFoxClient::new(smartfox_url).map_err(|source| Error::SmartFox { source })?;
+    let snapshot = fetch_snapshot(&client).await?;
+    let publisher = MqttPublisher::connect(&mqtt_config)
+        .await
+        .map_err(mqtt_error)?;
+
+    publisher
+        .publish_discovery(&snapshot)
+        .await
+        .map_err(mqtt_error)?;
+    publisher
+        .publish_state(&snapshot)
+        .await
+        .map_err(mqtt_error)?;
+    publisher
+        .publish_availability(true)
+        .await
+        .map_err(mqtt_error)?;
+    publisher.flush().await.map_err(mqtt_error)?;
+
+    info!("exported MQTT discovery and state");
+    Ok(())
+}
+
+/// Runs continuous MQTT state updates.
+#[instrument(skip_all, fields(smartfox_url = %smartfox_url), err)]
+async fn run_continuously(
+    smartfox_url: &str,
+    mqtt_config: MqttConfig,
+    refresh_interval: Duration,
+) -> Result<(), Error> {
+    let client = SmartFoxClient::new(smartfox_url).map_err(|source| Error::SmartFox { source })?;
+    let mut state = RunState::default();
+
+    loop {
+        match update_mqtt(&client, &mqtt_config, &mut state).await {
+            Ok(discovery_published) => {
+                info!(discovery_published, "updated MQTT state");
+            }
+            Err(error) => {
+                if matches!(&error, Error::Mqtt { .. }) {
+                    state.publisher = None;
+                }
+                error!(%error, "update failed; retrying");
+                report_error_sources_debug(&error);
+            }
+        }
+
+        tokio::time::sleep(refresh_interval).await;
+    }
+}
+
+/// Fetches and normalizes one SmartFox snapshot.
+#[instrument(skip(client))]
+async fn fetch_snapshot(client: &SmartFoxClient) -> Result<EnergySnapshot, Error> {
     let values = client
         .fetch_values()
         .await
         .map_err(|source| Error::SmartFox { source })?;
+    EnergySnapshot::from_smartfox_values(&values).map_err(|source| Error::Model { source })
+}
 
-    info!("normalizing SmartFox values");
-    let snapshot =
-        EnergySnapshot::from_smartfox_values(&values).map_err(|source| Error::Model { source })?;
+/// Publishes one continuous update iteration.
+#[instrument(skip_all)]
+async fn update_mqtt(
+    smartfox: &SmartFoxClient,
+    mqtt_config: &MqttConfig,
+    state: &mut RunState,
+) -> Result<bool, Error> {
+    let snapshot = match fetch_snapshot(smartfox).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            publish_offline(state).await;
+            return Err(error);
+        }
+    };
 
-    println!("{snapshot:#?}");
-    Ok(())
+    if state.publisher.is_none() {
+        state.publisher = Some(
+            MqttPublisher::connect(mqtt_config)
+                .await
+                .map_err(mqtt_error)?,
+        );
+    }
+    let publisher = state
+        .publisher
+        .as_ref()
+        .expect("publisher should be present after connecting");
+
+    let discovery_published = if state.discovery_published {
+        false
+    } else {
+        publisher
+            .publish_discovery(&snapshot)
+            .await
+            .map_err(mqtt_error)?;
+        state.discovery_published = true;
+        true
+    };
+
+    publisher
+        .publish_state(&snapshot)
+        .await
+        .map_err(mqtt_error)?;
+    publisher
+        .publish_availability(true)
+        .await
+        .map_err(mqtt_error)?;
+
+    Ok(discovery_published)
+}
+
+/// Publishes offline availability when a publisher is available.
+async fn publish_offline(state: &RunState) {
+    if let Some(publisher) = &state.publisher
+        && let Err(error) = publisher.publish_availability(false).await
+    {
+        debug!(%error, "failed to publish MQTT offline availability");
+    }
+}
+
+/// Logs an error source chain at debug level.
+fn report_error_sources_debug(error: &Error) {
+    let mut source = StdError::source(error);
+    while let Some(error) = source {
+        debug!(%error, "caused by");
+        source = error.source();
+    }
+}
+
+/// Converts an MQTT module error into an application error.
+fn mqtt_error(source: mqtt::Error) -> Error {
+    Error::Mqtt {
+        source: Box::new(source),
+    }
+}
+
+/// Parses a human-readable duration.
+fn parse_duration(value: &str) -> Result<Duration, humantime::DurationError> {
+    humantime::parse_duration(value)
+}
+
+/// Stores continuous run state.
+#[derive(Default)]
+struct RunState {
+    /// MQTT publisher, connected after the first successful snapshot.
+    publisher: Option<MqttPublisher>,
+    /// Whether Home Assistant discovery was already published.
+    discovery_published: bool,
 }
 
 /// Reports application failures.
@@ -108,4 +359,17 @@ enum Error {
         #[source]
         source: model::Error,
     },
+    /// Indicates an MQTT publishing failure.
+    #[error("MQTT operation failed")]
+    Mqtt {
+        /// MQTT error source.
+        #[source]
+        source: Box<mqtt::Error>,
+    },
+    /// Indicates that a username is needed for the configured password.
+    #[error("MQTT username is required when MQTT password is configured")]
+    MissingMqttUsername,
+    /// Indicates that a password is needed for the configured username.
+    #[error("MQTT password is required when MQTT username is configured")]
+    MissingMqttPassword,
 }
