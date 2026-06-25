@@ -7,6 +7,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.5.40", features = ["derive", "env"] }
+display_full_error = "1.1.0"
 humantime = "2.3.0"
 jiff = { version = "0.2.29", default-features = false, features = ["serde", "std"] }
 quick-xml = { version = "0.38.0", features = ["serialize"] }

@@ -4,10 +4,11 @@ mod model;
 mod mqtt;
 mod smartfox;
 
-use std::{error::Error as StdError, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
+use display_full_error::DisplayFullErrorExt;
 use thiserror::Error;
 use tracing::{debug, error, info, instrument};
 use tracing_subscriber::EnvFilter;
@@ -129,7 +130,7 @@ async fn main() -> Result<()> {
     init_tracing();
 
     run().await.map_err(|error| {
-        error!(error = %display_full_error(&error), "command failed");
+        error!(error = %error.display_full(), "command failed");
         error.into()
     })
 }
@@ -165,18 +166,6 @@ fn init_tracing() {
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .try_init();
-}
-
-/// Formats an error and its source chain.
-fn display_full_error(error: &Error) -> String {
-    let mut message = error.to_string();
-    let mut source = StdError::source(error);
-    while let Some(error) = source {
-        message.push_str(": ");
-        message.push_str(&error.to_string());
-        source = error.source();
-    }
-    message
 }
 
 /// Fetches SmartFox values and prints a normalized snapshot.
@@ -236,7 +225,7 @@ async fn run_continuously(
                 if matches!(&error, Error::Mqtt { .. }) {
                     state.publisher = None;
                 }
-                error!(error = %display_full_error(&error), "update failed; retrying");
+                error!(error = %error.display_full(), "update failed; retrying");
             }
         }
 
