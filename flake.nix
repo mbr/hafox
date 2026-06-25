@@ -80,6 +80,8 @@
         let
           cfg = config.services.hafox;
 
+          hasMqttPassword = cfg.mqtt.password != null || cfg.mqtt.passwordFile != null;
+
           serviceEnvironment = {
             HAFOX_SMARTFOX_URL = cfg.smartfoxUrl;
             HAFOX_MQTT_HOST = cfg.mqtt.host;
@@ -92,7 +94,19 @@
           }
           // lib.optionalAttrs (cfg.mqtt.username != null) {
             HAFOX_MQTT_USERNAME = cfg.mqtt.username;
+          }
+          // lib.optionalAttrs (cfg.mqtt.password != null) {
+            HAFOX_MQTT_PASSWORD = cfg.mqtt.password;
           };
+
+          startScript = pkgs.writeShellScript "hafox-start" ''
+            set -eu
+            ${lib.optionalString (cfg.mqtt.passwordFile != null) ''
+              HAFOX_MQTT_PASSWORD="$(cat "$CREDENTIALS_DIRECTORY/mqtt-password")"
+              export HAFOX_MQTT_PASSWORD
+            ''}
+            exec ${lib.getExe cfg.package} run
+          '';
         in
         {
           options.services.hafox = {
@@ -116,12 +130,6 @@
               type = lib.types.str;
               default = "hafox=info";
               description = "Tracing filter used by the service.";
-            };
-
-            environmentFile = lib.mkOption {
-              type = lib.types.nullOr (lib.types.either lib.types.path lib.types.str);
-              default = null;
-              description = "Environment file containing secret service variables.";
             };
 
             mqtt = {
@@ -149,6 +157,18 @@
                 description = "MQTT user name.";
               };
 
+              password = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "MQTT password.";
+              };
+
+              passwordFile = lib.mkOption {
+                type = lib.types.nullOr (lib.types.either lib.types.path lib.types.str);
+                default = null;
+                description = "File containing the MQTT password.";
+              };
+
               discoveryPrefix = lib.mkOption {
                 type = lib.types.str;
                 default = "homeassistant";
@@ -164,6 +184,17 @@
           };
 
           config = lib.mkIf cfg.enable {
+            assertions = [
+              {
+                assertion = cfg.mqtt.password == null || cfg.mqtt.passwordFile == null;
+                message = "services.hafox.mqtt.password and services.hafox.mqtt.passwordFile are mutually exclusive";
+              }
+              {
+                assertion = (cfg.mqtt.username != null) == hasMqttPassword;
+                message = "services.hafox.mqtt.username must be configured exactly when an MQTT password is configured";
+              }
+            ];
+
             systemd.services.hafox = {
               description = "hafox SmartFox to Home Assistant MQTT bridge";
               wantedBy = [ "multi-user.target" ];
@@ -172,7 +203,7 @@
               environment = serviceEnvironment;
 
               serviceConfig = {
-                ExecStart = "${lib.getExe cfg.package} run";
+                ExecStart = startScript;
                 Restart = "always";
                 RestartSec = "5s";
                 DynamicUser = true;
@@ -193,8 +224,8 @@
                 RestrictSUIDSGID = true;
                 SystemCallArchitectures = "native";
               }
-              // lib.optionalAttrs (cfg.environmentFile != null) {
-                EnvironmentFile = cfg.environmentFile;
+              // lib.optionalAttrs (cfg.mqtt.passwordFile != null) {
+                LoadCredential = [ "mqtt-password:${cfg.mqtt.passwordFile}" ];
               };
             };
           };

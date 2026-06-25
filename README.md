@@ -24,14 +24,14 @@ The flake exposes `nixosModules.default`:
     enable = true;
     smartfoxUrl = "http://smartfox";
     refreshInterval = "5s";
-    environmentFile = "/run/secrets/hafox.env";
 
     mqtt = {
       host = "myserver";
       username = "hafox";
+      passwordFile = "/run/secrets/hafox-mqtt-password";
     };
   };
 }
 ```
 
-The environment file may contain `HAFOX_MQTT_PASSWORD`, or both MQTT credential variables.
+Use `mqtt.passwordFile` for production secrets. `mqtt.password` is available for non-secret deployments but stores the value in the Nix configuration.
