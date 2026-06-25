@@ -124,6 +124,30 @@ This publishes discovery information to MQTT once at startup, then writes only s
 
 Logging can be configured using `RUST_LOG`. The default, `hafox=info`, prints one log message per update.
 
+## Home Assistant setup
+
+After MQTT discovery entities have been written, open *Settings*, *Dashboards*, *Energy*.
+
+For *Electricity grid*, add grid consumption with:
+
+```
+sensor.hafox_smartfox_grid_import_energy_total
+```
+
+and return to grid with:
+
+```
+sensor.hafox_smartfox_grid_export_energy_total
+```
+
+For *Solar panels*, add solar production with:
+
+```
+sensor.hafox_smartfox_solar_production_energy_total
+```
+
+For *Home battery storage* is not supported, since SmartFox only exposes battery power, state of charge, and temperature, while Home Assistant [requires lifetime energy measurement](https://www.home-assistant.io/docs/energy/battery/).
+
 ## NixOS
 
 The flake exposes `nixosModules.default`:
