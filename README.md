@@ -146,7 +146,7 @@ For *Solar panels*, add solar production with:
 sensor.hafox_smartfox_solar_production_energy_total
 ```
 
-For *Home battery storage* is not supported, since SmartFox only exposes battery power, state of charge, and temperature, while Home Assistant [requires lifetime energy measurement](https://www.home-assistant.io/docs/energy/battery/).
+*Home battery storage* is not supported, since SmartFox only exposes battery power, state of charge, and temperature, while Home Assistant [requires lifetime energy measurement](https://www.home-assistant.io/docs/energy/battery/).
 
 ## NixOS
 
@@ -158,13 +158,13 @@ The flake exposes `nixosModules.default`:
 
   services.hafox = {
     enable = true;
-    smartfoxUrl = "http://smartfox";
-    refreshInterval = "5s";
+    # smartfoxUrl = "http://smartfox";
+    # refreshInterval = "5s";
 
     mqtt = {
       host = "myserver";
-      username = "hafox";
-      passwordFile = "/run/secrets/hafox-mqtt-password";
+      # username = "hafox";
+      # passwordFile = "/run/secrets/hafox-mqtt-password";
     };
   };
 }
