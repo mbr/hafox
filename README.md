@@ -178,3 +178,7 @@ The flake exposes `nixosModules.default`:
 ```
 
 If the MQTT broker requires authentication, set `mqtt.username` and exactly one of `mqtt.passwordFile` or `mqtt.password`. Use `mqtt.passwordFile` for production secrets. `mqtt.password` stores the value in the Nix configuration.
+
+## Credits
+
+This project owes a debt to <https://github.com/michaelherger/homeassistant-smartfox>, which did a great job of collecting and extracting all the necessary information.
