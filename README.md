@@ -70,33 +70,59 @@ hafox/state
 hafox/status
 ```
 
-Both of these values are retained.
+Both of these values are retained. The `hafox/state` payload is JSON:
 
-Discovery is retained, so Home Assistant can recreate entities after a restart. The state topic is also retained, so new subscribers immediately see the latest values.
-
-```sh
-hafox export --mqtt-host myserver
+```json
+{
+  "timestamp": 1782424028,
+  "power": {
+    "solar_production_w": 0,
+    "grid_net_w": 51,
+    "battery_w": 1100,
+    "site_consumption_w": 1151
+  },
+  "energy": {
+    "grid_import_wh": 2992004,
+    "grid_export_wh": 5339753,
+    "solar_production_wh": 13499800
+  },
+  "battery": {
+    "state_of_charge_pct": 49.0,
+    "temperature_c": 31.0
+  },
+  "phases": {
+    "l1": {
+      "voltage_v": 235.0,
+      "current_a": 1.66,
+      "power_w": 180
+    },
+    "l2": {
+      "voltage_v": 236.0,
+      "current_a": 3.16,
+      "power_w": 187
+    },
+    "l3": {
+      "voltage_v": 234.0,
+      "current_a": 1.39,
+      "power_w": -316
+    }
+  }
+}
 ```
+
+The state topic is also retained, so intermittent outages of `hafox` have no catastrophic effects like resetting the meter in Home Assistant. Run `hafox export --help` for a list of configuration options to configure MQTT server credentials.
+
+## Continuous export
 
 For continuous updates, use `run`:
 
 ```sh
-hafox run --mqtt-host myserver --refresh-interval 5s
+hafox run --mqtt-host myserver --refresh-interval 5s ...
 ```
 
-If the broker needs credentials, pass `--mqtt-username` and `--mqtt-password`, or set `HAFOX_MQTT_USERNAME` and `HAFOX_MQTT_PASSWORD`.
+This will publish discovery information to MQTT once at the start, writing only state updates every `refresh-interval` seconds afterwards.
 
-The default discovery prefix is `homeassistant`, the default state topic prefix is `hafox`. Energy sensors only use lifetime counters. Missing or unsafe lifetime data is rejected instead of being published as `0`.
-
-## Usage
-
-```sh
-hafox dump --smartfox-url http://smartfox
-hafox export --smartfox-url http://smartfox --mqtt-host myserver
-hafox run --smartfox-url http://smartfox --mqtt-host myserver --refresh-interval 30s
-```
-
-`dump` prints the current normalized snapshot. `export` publishes Home Assistant MQTT discovery and one retained state update. `run` publishes discovery on the first successful update and then refreshes MQTT state continuously.
+Logging can we configured using `RUST_LOG`, the default of `hafox=INFO` will print one log message per update.
 
 ## NixOS
 
