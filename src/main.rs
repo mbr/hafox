@@ -10,13 +10,13 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use display_full_error::DisplayFullErrorExt;
 use thiserror::Error;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
     model::{EnergySnapshot, EnergyTotals},
     mqtt::{MqttConfig, MqttCredentials, MqttPublisher},
-    smartfox::SmartFoxClient,
+    smartfox::{SettingsUpdate, SmartFoxClient},
 };
 
 /// Parses command-line arguments.
@@ -218,9 +218,12 @@ async fn run_continuously(
 
     loop {
         match update_mqtt(&client, &mqtt_config, &mut state).await {
-            Ok(discovery_published) => {
+            Ok(UpdateOutcome::Published {
+                discovery_published,
+            }) => {
                 info!(discovery_published, "updated MQTT state");
             }
+            Ok(UpdateOutcome::RepairedCounters) => {}
             Err(error) => {
                 if matches!(&error, Error::Mqtt { .. }) {
                     state.publisher = None;
@@ -249,7 +252,7 @@ async fn update_mqtt(
     smartfox: &SmartFoxClient,
     mqtt_config: &MqttConfig,
     state: &mut RunState,
-) -> Result<bool, Error> {
+) -> Result<UpdateOutcome, Error> {
     let snapshot = match fetch_snapshot(smartfox).await {
         Ok(snapshot) => snapshot,
         Err(error) => {
@@ -261,6 +264,22 @@ async fn update_mqtt(
         .await
         .map_err(mqtt_error)?;
     if let Err(error) = validate_lifetime_counters(&snapshot, retained_energy.as_ref()) {
+        if is_decreased_lifetime_counter(&error) {
+            match repair_decreased_grid_counters(smartfox, &snapshot, retained_energy.as_ref())
+                .await
+            {
+                Ok(true) => return Ok(UpdateOutcome::RepairedCounters),
+                Ok(false) => {
+                    publish_offline(state).await;
+                    return Err(error);
+                }
+                Err(error) => {
+                    publish_offline(state).await;
+                    return Err(error);
+                }
+            }
+        }
+
         publish_offline(state).await;
         return Err(error);
     }
@@ -296,7 +315,67 @@ async fn update_mqtt(
         .publish_availability(true)
         .await
         .map_err(mqtt_error)?;
-    Ok(discovery_published)
+    Ok(UpdateOutcome::Published {
+        discovery_published,
+    })
+}
+
+/// Returns whether an error reports a decreased lifetime counter.
+fn is_decreased_lifetime_counter(error: &Error) -> bool {
+    matches!(error, Error::DecreasedLifetimeCounter { .. })
+}
+
+/// Restores decreased SmartFox grid counters from retained MQTT state.
+async fn repair_decreased_grid_counters(
+    smartfox: &SmartFoxClient,
+    snapshot: &EnergySnapshot,
+    retained: Option<&EnergyTotals>,
+) -> Result<bool, Error> {
+    let Some(retained) = retained else {
+        return Ok(false);
+    };
+
+    let mut update = SettingsUpdate::default();
+    let mut has_update = false;
+
+    if snapshot.energy.grid_import.watt_hours < retained.grid_import.watt_hours {
+        let value = lifetime_counter_as_u64("grid_import", retained.grid_import.watt_hours)?;
+        warn!(
+            field = "grid_import",
+            current = snapshot.energy.grid_import.watt_hours,
+            restored = value,
+            "restoring SmartFox lifetime counter from retained MQTT state"
+        );
+        update.total_energy_from_grid = Some(value);
+        has_update = true;
+    }
+
+    if snapshot.energy.grid_export.watt_hours < retained.grid_export.watt_hours {
+        let value = lifetime_counter_as_u64("grid_export", retained.grid_export.watt_hours)?;
+        warn!(
+            field = "grid_export",
+            current = snapshot.energy.grid_export.watt_hours,
+            restored = value,
+            "restoring SmartFox lifetime counter from retained MQTT state"
+        );
+        update.total_energy_to_grid = Some(value);
+        has_update = true;
+    }
+
+    if !has_update {
+        return Ok(false);
+    }
+
+    update
+        .submit(smartfox)
+        .await
+        .map_err(|source| Error::SmartFox { source })?;
+    Ok(true)
+}
+
+/// Converts a lifetime counter into a SmartFox settings value.
+fn lifetime_counter_as_u64(field: &'static str, value: i64) -> Result<u64, Error> {
+    u64::try_from(value).map_err(|_| Error::InvalidLifetimeCounter { field, value })
 }
 
 /// Validates lifetime counters before publishing them to Home Assistant.
@@ -368,6 +447,17 @@ fn mqtt_error(source: mqtt::Error) -> Error {
 /// Parses a human-readable duration.
 fn parse_duration(value: &str) -> Result<Duration, humantime::DurationError> {
     humantime::parse_duration(value)
+}
+
+/// Describes the result of one continuous update.
+enum UpdateOutcome {
+    /// Indicates that an MQTT state was published.
+    Published {
+        /// Whether discovery was also published.
+        discovery_published: bool,
+    },
+    /// Indicates that SmartFox counters were repaired instead of publishing.
+    RepairedCounters,
 }
 
 /// Stores continuous run state.
