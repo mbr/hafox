@@ -257,7 +257,10 @@ async fn update_mqtt(
             return Err(error);
         }
     };
-    if let Err(error) = validate_lifetime_counters(&snapshot, state.last_energy.as_ref()) {
+    let retained_energy = mqtt::read_retained_energy(mqtt_config)
+        .await
+        .map_err(mqtt_error)?;
+    if let Err(error) = validate_lifetime_counters(&snapshot, retained_energy.as_ref()) {
         publish_offline(state).await;
         return Err(error);
     }
@@ -293,8 +296,6 @@ async fn update_mqtt(
         .publish_availability(true)
         .await
         .map_err(mqtt_error)?;
-    state.last_energy = Some(snapshot.energy.clone());
-
     Ok(discovery_published)
 }
 
@@ -376,8 +377,6 @@ struct RunState {
     publisher: Option<MqttPublisher>,
     /// Whether Home Assistant discovery was already published.
     discovery_published: bool,
-    /// Last successfully published lifetime counters.
-    last_energy: Option<EnergyTotals>,
 }
 
 /// Reports application failures.

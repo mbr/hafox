@@ -3,12 +3,15 @@
 use std::time::{Duration, SystemTime};
 
 use rumqttc::{AsyncClient, ConnectionError, Event, MqttOptions, Packet, QoS};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tracing::{debug, instrument, trace};
 
-use crate::model::{EnergySnapshot, GridPhase, PhaseMeasurement};
+use crate::model::{Energy, EnergySnapshot, EnergyTotals, GridPhase, PhaseMeasurement};
+
+/// Time to wait for a retained MQTT state after subscribing.
+const RETAINED_STATE_READ_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Publishes Home Assistant MQTT discovery and state payloads.
 #[derive(Debug)]
@@ -27,12 +30,7 @@ impl MqttPublisher {
     /// Connects to the configured MQTT broker.
     #[instrument(skip_all, fields(host = %config.host, port = config.port))]
     pub async fn connect(config: &MqttConfig) -> Result<Self, Error> {
-        let mut options = MqttOptions::new(&config.client_id, &config.host, config.port);
-        options.set_keep_alive(Duration::from_secs(30));
-        if let Some(credentials) = &config.credentials {
-            options.set_credentials(&credentials.username, &credentials.password);
-        }
-
+        let options = mqtt_options(config, &config.client_id);
         let (client, mut event_loop) = AsyncClient::new(options, 100);
         loop {
             match event_loop
@@ -86,14 +84,16 @@ impl MqttPublisher {
     pub async fn publish_state(&self, snapshot: &EnergySnapshot) -> Result<(), Error> {
         let payload = serde_json::to_vec(&StatePayload::from_snapshot(snapshot))
             .map_err(|source| Error::Json { source })?;
-        self.publish(self.state_topic(), true, payload).await
+        self.publish(state_topic(&self.topic_prefix), true, payload)
+            .await
     }
 
     /// Publishes retained availability state.
     #[instrument(skip(self))]
     pub async fn publish_availability(&self, available: bool) -> Result<(), Error> {
         let payload = if available { "online" } else { "offline" };
-        self.publish(self.availability_topic(), true, payload).await
+        self.publish(availability_topic(&self.topic_prefix), true, payload)
+            .await
     }
 
     /// Gives the event loop time to transmit queued messages.
@@ -105,16 +105,6 @@ impl MqttPublisher {
             .map_err(|source| Error::Client { source })?;
         tokio::time::sleep(Duration::from_millis(500)).await;
         Ok(())
-    }
-
-    /// Returns the shared JSON state topic.
-    fn state_topic(&self) -> String {
-        format!("{}/state", self.topic_prefix)
-    }
-
-    /// Returns the shared availability topic.
-    fn availability_topic(&self) -> String {
-        format!("{}/status", self.topic_prefix)
     }
 
     /// Publishes one MQTT payload.
@@ -133,6 +123,61 @@ impl Drop for MqttPublisher {
     fn drop(&mut self) {
         self.event_loop.abort();
     }
+}
+
+/// Reads the retained MQTT energy state.
+pub async fn read_retained_energy(config: &MqttConfig) -> Result<Option<EnergyTotals>, Error> {
+    let topic = state_topic(&config.topic_prefix);
+    let client_id = format!("{}-state-reader", config.client_id);
+    let options = mqtt_options(config, &client_id);
+    let (client, mut event_loop) = AsyncClient::new(options, 10);
+
+    loop {
+        match event_loop
+            .poll()
+            .await
+            .map_err(|source| Error::Connection { source })?
+        {
+            Event::Incoming(Packet::ConnAck(_)) => break,
+            event => trace!(?event, "received MQTT event while reading retained state"),
+        }
+    }
+
+    client
+        .subscribe(&topic, QoS::AtLeastOnce)
+        .await
+        .map_err(|source| Error::Client { source })?;
+
+    let payload = tokio::time::timeout(RETAINED_STATE_READ_TIMEOUT, async {
+        loop {
+            match event_loop
+                .poll()
+                .await
+                .map_err(|source| Error::Connection { source })?
+            {
+                Event::Incoming(Packet::Publish(publish)) if publish.topic == topic => {
+                    return Ok::<_, Error>(Some(publish.payload.to_vec()));
+                }
+                event => trace!(?event, "received MQTT event while reading retained state"),
+            }
+        }
+    })
+    .await;
+
+    if let Err(error) = client.disconnect().await {
+        debug!(%error, "failed to disconnect retained MQTT state reader");
+    }
+
+    let Some(payload) = payload.unwrap_or(Ok(None))? else {
+        return Ok(None);
+    };
+    if payload.is_empty() {
+        return Ok(None);
+    }
+
+    let state: RetainedStatePayload =
+        serde_json::from_slice(&payload).map_err(|source| Error::Json { source })?;
+    Ok(Some(state.energy.into_energy_totals()))
 }
 
 /// Describes MQTT connection settings.
@@ -157,6 +202,27 @@ pub struct MqttCredentials {
     pub username: String,
     /// MQTT password.
     pub password: String,
+}
+
+/// Builds MQTT options for a client connection.
+fn mqtt_options(config: &MqttConfig, client_id: &str) -> MqttOptions {
+    let mut options = MqttOptions::new(client_id, &config.host, config.port);
+    options.set_keep_alive(Duration::from_secs(30));
+    if let Some(credentials) = &config.credentials {
+        options.set_credentials(&credentials.username, &credentials.password);
+    }
+
+    options
+}
+
+/// Returns the shared JSON state topic.
+fn state_topic(topic_prefix: &str) -> String {
+    format!("{topic_prefix}/state")
+}
+
+/// Returns the shared availability topic.
+fn availability_topic(topic_prefix: &str) -> String {
+    format!("{topic_prefix}/status")
 }
 
 /// Reports MQTT publishing failures.
@@ -281,6 +347,41 @@ impl DevicePayload {
             name: "SmartFox",
             manufacturer: "SmartFox",
             sw_version: snapshot.system.firmware_version.clone(),
+        }
+    }
+}
+
+/// Describes retained energy counters read from MQTT.
+#[derive(Debug, Deserialize)]
+struct RetainedStatePayload {
+    /// Cumulative energy counters.
+    energy: RetainedEnergyPayload,
+}
+
+/// Describes retained cumulative energy counters.
+#[derive(Debug, Deserialize)]
+struct RetainedEnergyPayload {
+    /// Cumulative grid import in watt-hours.
+    grid_import_wh: i64,
+    /// Cumulative grid export in watt-hours.
+    grid_export_wh: i64,
+    /// Cumulative solar production in watt-hours.
+    solar_production_wh: i64,
+}
+
+impl RetainedEnergyPayload {
+    /// Converts retained energy counters into the domain model.
+    fn into_energy_totals(self) -> EnergyTotals {
+        EnergyTotals {
+            grid_import: Energy {
+                watt_hours: self.grid_import_wh,
+            },
+            grid_export: Energy {
+                watt_hours: self.grid_export_wh,
+            },
+            solar_production: Energy {
+                watt_hours: self.solar_production_wh,
+            },
         }
     }
 }
