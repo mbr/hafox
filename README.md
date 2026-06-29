@@ -1,6 +1,6 @@
 # hafox
 
-`hafox` is a small utility that reads the local [SmartFox](https://smartfox.at/) `values.xml` endpoint and publishes it to MQTT, in a format that [Home Assistant](https://www.home-assistant.io/) understands.
+`hafox` is a small utility that reads the local [SmartFox](https://smartfox.at/) `values.xml` endpoint and publishes it to MQTT, in a format that [Home Assistant](https://www.home-assistant.io/) understands. It also protects Home Assistant Energy from SmartFox grid counter rollbacks by restoring counters from the retained MQTT state.
 
 ## Quickstart
 
@@ -121,6 +121,8 @@ hafox run --mqtt-host myserver --refresh-interval 5s ...
 ```
 
 This publishes discovery information to MQTT once at startup, then writes only state updates every `--refresh-interval` seconds afterwards.
+
+`run` uses the retained `hafox/state` MQTT payload as the last accepted state. If SmartFox restarts and reports lower grid import/export lifetime counters, `hafox` restores those counters on the device from MQTT instead of publishing backwards values to Home Assistant. This appears to be needed because SmartFox automatic restarts can happen without first persisting the latest energy counters, losing recent consumption state. Repairs are logged at `warn` level.
 
 Logging can be configured using `RUST_LOG`. The default, `hafox=info`, prints one log message per update.
 
